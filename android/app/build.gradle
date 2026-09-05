@@ -1,10 +1,10 @@
 apply plugin: 'com.android.application'
 
 android {
-    namespace = "com.kegama.attendance"
-    compileSdk = rootProject.ext.compileSdkVersion
+    namespace "com.kegama.payroll"
+    compileSdk rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "com.kegama.attendance"
+        applicationId "com.kegama.payroll"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
@@ -13,11 +13,32 @@ android {
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
              // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
-            ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+            ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+    signingConfigs {
+        release {
+            def keystoreFile = file('kegama-release.keystore')
+            if (System.getenv("KEYSTORE_PATH") != null && file(System.getenv("KEYSTORE_PATH")).exists()) {
+                keystoreFile = file(System.getenv("KEYSTORE_PATH"))
+            }
+            if (keystoreFile.exists()) {
+                storeFile keystoreFile
+                storePassword System.getenv("KEYSTORE_PASSWORD") ?: "kegama_payroll_secret_2026"
+                keyAlias System.getenv("KEY_ALIAS") ?: "kegama"
+                keyPassword System.getenv("KEY_PASSWORD") ?: "kegama_payroll_secret_2026"
+            }
         }
     }
     buildTypes {
         release {
+            def keystoreFile = file('kegama-release.keystore')
+            if (System.getenv("KEYSTORE_PATH") != null && file(System.getenv("KEYSTORE_PATH")).exists()) {
+                keystoreFile = file(System.getenv("KEYSTORE_PATH"))
+            }
+            if (keystoreFile.exists()) {
+                signingConfig signingConfigs.release
+            }
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }

@@ -1,0 +1,186 @@
+name: Build KEGAMA Payroll Mobile Apps (Android APK & iOS)
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'Platform to build'
+        required: true
+        default: 'both'
+        type: choice
+        options:
+          - both
+          - android_only
+          - ios_only
+      release_channel:
+        description: 'Build channel'
+        required: true
+        default: 'release'
+        type: choice
+        options:
+          - release
+          - debug
+
+permissions:
+  contents: write
+
+jobs:
+  build-android:
+    name: Build Android APK (KEGAMA Payroll)
+    if: ${{ github.event.inputs.build_type != 'ios_only' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Setup Java JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: 17
+
+      - name: Setup Android SDK Tools
+        uses: android-actions/setup-android@v3
+
+      - name: Configure Client Secrets & Environment
+        run: |
+          echo "Injecting KEGAMA API Secrets into mobile build..."
+          echo "VITE_API_SECRET=${{ secrets.KEGAMA_API_SECRET || 'kgm_sec_d7dc82afb7e66347fa4a5b5fb9e20fe68f2a81ffd65a0131' }}" > .env
+          echo "VITE_API_BASE_URL=${{ secrets.KEGAMA_API_BASE_URL || '' }}" >> .env
+          echo "CLIENT_INTERFACE_KEY=${{ secrets.CLIENT_INTERFACE_KEY || 'kgm_cli_13378cf6c6187338c9d5df4c2ec6d1a95d37756ff3fc72f7' }}" >> .env
+          cat .env
+
+      - name: Install Dependencies
+        run: npm ci || npm install
+
+      - name: Build Web Application
+        run: npm run build
+
+      - name: Sync Capacitor Android
+        run: npx cap sync android
+
+      - name: Setup Android Release Keystore & Signature
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "Decoding release keystore from repository secrets..."
+            echo "$KEYSTORE_BASE64" | base64 -d > android/app/kegama-release.keystore
+          elif [ -f "android/app/kegama-release.keystore" ]; then
+            echo "Using pre-configured KEGAMA Payroll release keystore..."
+          else
+            echo "No keystore secret or file found. Generating transient release keystore for CI build..."
+            chmod +x scripts/generate-keystore.sh
+            ./scripts/generate-keystore.sh
+          fi
+          ls -lh android/app/kegama-release.keystore
+
+      - name: Grant Execute Permission to Gradle Wrapper
+        run: chmod +x android/gradlew
+
+      - name: Build Android APKs with Gradle
+        working-directory: android
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD || 'kegama_payroll_secret_2026' }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS || 'kegama' }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD || 'kegama_payroll_secret_2026' }}
+        run: |
+          ./gradlew assembleRelease assembleDebug --stacktrace
+
+      - name: Prepare APK Release Artifacts
+        run: |
+          mkdir -p output-apk
+          if [ -f "android/app/build/outputs/apk/release/app-release.apk" ]; then
+            cp android/app/build/outputs/apk/release/app-release.apk output-apk/KEGAMA-Payroll-Release-Signed.apk
+          fi
+          if [ -f "android/app/build/outputs/apk/debug/app-debug.apk" ]; then
+            cp android/app/build/outputs/apk/debug/app-debug.apk output-apk/KEGAMA-Payroll-Debug.apk
+          fi
+          ls -lh output-apk/
+
+      - name: Upload Android APK Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: KEGAMA-Payroll-Android-APKs
+          path: output-apk/
+          retention-days: 30
+
+  build-ios:
+    name: Build iOS App (KEGAMA Payroll)
+    if: ${{ github.event.inputs.build_type != 'android_only' }}
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '15.4'
+
+      - name: Configure Client Secrets & Environment
+        run: |
+          echo "Injecting KEGAMA API Secrets into iOS build..."
+          echo "VITE_API_SECRET=${{ secrets.KEGAMA_API_SECRET || 'kgm_sec_d7dc82afb7e66347fa4a5b5fb9e20fe68f2a81ffd65a0131' }}" > .env
+          echo "VITE_API_BASE_URL=${{ secrets.KEGAMA_API_BASE_URL || '' }}" >> .env
+          echo "CLIENT_INTERFACE_KEY=${{ secrets.CLIENT_INTERFACE_KEY || 'kgm_cli_13378cf6c6187338c9d5df4c2ec6d1a95d37756ff3fc72f7' }}" >> .env
+
+      - name: Install Dependencies
+        run: npm ci || npm install
+
+      - name: Build Web Application
+        run: npm run build
+
+      - name: Sync Capacitor iOS
+        run: npx cap sync ios
+
+      - name: Install CocoaPods
+        working-directory: ios/App
+        run: pod install
+
+      - name: Build iOS Archive (Unsigned / Ad-Hoc)
+        run: |
+          xcodebuild -workspace ios/App/App.xcworkspace \
+            -scheme App \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/KEGAMA-Payroll.xcarchive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            clean archive
+
+      - name: Package iOS IPA & Archive
+        run: |
+          mkdir -p build/Payload
+          cp -r build/KEGAMA-Payroll.xcarchive/Products/Applications/App.app build/Payload/
+          cd build
+          zip -qr KEGAMA-Payroll-v1.0.0.ipa Payload
+          zip -qr KEGAMA-Payroll.xcarchive.zip KEGAMA-Payroll.xcarchive
+          ls -lh
+
+      - name: Upload iOS App Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: KEGAMA-Payroll-iOS-App
+          path: |
+            build/KEGAMA-Payroll-v1.0.0.ipa
+            build/KEGAMA-Payroll.xcarchive.zip
+          retention-days: 30

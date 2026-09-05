@@ -7,16 +7,78 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Dependencies
 node_modules
+server/node_modules
+.pnp
+.pnp.js
+
+# Build Outputs & Bundles
 dist
 dist-ssr
+build
+out
 *.local
+
+# Environment Variables & Secrets
+.env
+.env.*
+*.env
+!.env.example
+
+# Central Persistent Storage & SQLite Database
+server/data/*.db
+server/data/*.db-shm
+server/data/*.db-wal
+server/data/backups/
+server/data/storage/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Android & iOS Signing Keys & Credentials
+*.keystore
+*.jks
+*.p12
+*.key
+*.pem
+*.base64
+kegama-release.keystore
+kegama-release.keystore.base64
+android/app/kegama-release.keystore
+android/app/kegama-release.keystore.base64
+
+# Android Build Outputs & Generated Assets
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/captures/
+android/.cxx/
+android/.externalNativeBuild/
+android/app/src/main/assets/public/
+android/app/src/main/assets/capacitor.config.json
+android/app/src/main/assets/capacitor.plugins.json
+android/capacitor-cordova-android-plugins/
+*.apk
+*.aab
+*.aar
+
+# iOS Build Outputs & Generated Assets
+ios/App/App/public/
+ios/App/App/capacitor.config.json
+ios/App/App/config.xml
+ios/capacitor-cordova-ios-plugins/
+ios/App/Pods/
 
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
 .idea
 .DS_Store
+Thumbs.db
 *.suo
 *.ntvs*
 *.njsproj

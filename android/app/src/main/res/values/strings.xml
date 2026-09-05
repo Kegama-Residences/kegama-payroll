@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">Kegama</string>
-    <string name="title_activity_main">Kegama</string>
-    <string name="package_name">com.kegama.attendance</string>
-    <string name="custom_url_scheme">com.kegama.attendance</string>
+    <string name="app_name">KEGAMA Payroll</string>
+    <string name="title_activity_main">KEGAMA Payroll</string>
+    <string name="package_name">com.kegama.payroll</string>
+    <string name="custom_url_scheme">com.kegama.payroll</string>
 </resources>
