@@ -74,6 +74,7 @@ jobs:
       - name: Setup Android Release Keystore & Signature
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
           if [ -n "$KEYSTORE_BASE64" ]; then
             echo "Decoding release keystore from repository secrets..."
             echo "$KEYSTORE_BASE64" | base64 -d > android/app/kegama-release.keystore
