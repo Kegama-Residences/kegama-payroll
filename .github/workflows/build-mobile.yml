@@ -180,7 +180,7 @@ jobs:
           mkdir -p build/Payload
           cp -r build/KEGAMA-Payroll.xcarchive/Products/Applications/App.app build/Payload/
           cd build
-          zip -qr KEGAMA-Payroll-v1.0.0.ipa Payload
+          zip -qr KEGAMA-Payroll-Release.ipa Payload
           zip -qr KEGAMA-Payroll.xcarchive.zip KEGAMA-Payroll.xcarchive
           ls -lh
 
@@ -189,7 +189,7 @@ jobs:
         with:
           name: KEGAMA-Payroll-iOS-App
           path: |
-            build/KEGAMA-Payroll-v1.0.0.ipa
+            build/KEGAMA-Payroll-Release.ipa
             build/KEGAMA-Payroll.xcarchive.zip
           retention-days: 30
 
