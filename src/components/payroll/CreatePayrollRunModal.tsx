@@ -1,19 +1,26 @@
 import React, { useState } from 'react';
 import { Employee, PayrollRun, CompanyProfile, PaymentFrequency } from '../../types/payroll';
-import { calculatePhilippinePayslip } from '../../utils/calculations';
-import { formatPHP } from '../../utils/currency';
+import { calculatePhilippinePayslip, summarizePayslips } from '../../utils/calculations';
+import { AttendanceMap, summarizePeriod } from '../../utils/attendance';
+import { formatPHP, formatLocalDate } from '../../utils/currency';
 import { triggerHapticFeedback } from '../../utils/printService';
-import { Calendar, Users, X, ArrowRight } from 'lucide-react';
+import { newId } from '../../utils/id';
+import { Calendar, Users, X, ArrowRight, AlertCircle, CalendarCheck, AlertTriangle } from 'lucide-react';
 
 interface CreatePayrollRunModalProps {
   employees: Employee[];
   company: CompanyProfile;
+  /** Existing runs used to detect overlapping periods (#20). */
+  runs?: PayrollRun[];
+  attendance: AttendanceMap;
   onClose: () => void;
   onCreateRun: (run: PayrollRun) => void;
 }
 
 export const CreatePayrollRunModal: React.FC<CreatePayrollRunModalProps> = ({
   employees,
+  runs = [],
+  attendance,
   onClose,
   onCreateRun,
 }) => {
@@ -26,16 +33,14 @@ export const CreatePayrollRunModal: React.FC<CreatePayrollRunModalProps> = ({
 
   // Default to 1st Cut-Off (1-15) or 2nd Cut-off (16-EOM)
   const isSecondHalf = now.getDate() > 15;
-  const defaultStart = new Date(year, month, isSecondHalf ? 16 : 1)
-    .toISOString()
-    .slice(0, 10);
+  const defaultStart = formatLocalDate(new Date(year, month, isSecondHalf ? 16 : 1));
   const defaultEnd = isSecondHalf
-    ? new Date(year, month + 1, 0).toISOString().slice(0, 10)
-    : new Date(year, month, 15).toISOString().slice(0, 10);
+    ? formatLocalDate(new Date(year, month + 1, 0))
+    : formatLocalDate(new Date(year, month, 15));
   const defaultCrediting = defaultEnd;
 
   const [periodName, setPeriodName] = useState<string>(
-    `${monthName} ${isSecondHalf ? '16–' + new Date(year, month + 1, 0).getDate() : '1–15'}, ${year} (${isSecondHalf ? '2nd' : '1st'} Cut-Off)`
+    `${monthName} ${isSecondHalf ? '16-' + new Date(year, month + 1, 0).getDate() : '1-15'}, ${year} (${isSecondHalf ? '2nd' : '1st'} Cut-Off)`
   );
   const [periodStart, setPeriodStart] = useState<string>(defaultStart);
   const [periodEnd, setPeriodEnd] = useState<string>(defaultEnd);
@@ -44,6 +49,8 @@ export const CreatePayrollRunModal: React.FC<CreatePayrollRunModalProps> = ({
   const [selectedEmployeeIds, setSelectedEmployeeIds] = useState<string[]>(
     activeEmployees.map((e) => e.id)
   );
+  const [formError, setFormError] = useState<string | null>(null);
+  const [pullAttendance, setPullAttendance] = useState(true);
 
   const toggleEmployee = (id: string) => {
     setSelectedEmployeeIds((prev) =>
@@ -63,35 +70,82 @@ export const CreatePayrollRunModal: React.FC<CreatePayrollRunModalProps> = ({
     selectedEmployeeIds.includes(e.id)
   );
 
-  const projectedPayslips = selectedEmployees.map((emp) =>
-    calculatePhilippinePayslip(emp, {
+  // Attendance pull: days, absences (as undertime), OT, holidays flow in
+  // automatically. Untouched periods behave exactly like manual entry.
+  const attendanceSummaries = selectedEmployees.map((emp) =>
+    pullAttendance ? summarizePeriod(emp, attendance, periodStart, periodEnd) : null,
+  );
+  const attendanceStats = attendanceSummaries.reduce(
+    (acc, s) => {
+      if (!s || !s.hasMarks) return acc;
+      acc.marked += 1;
+      acc.absent += s.absentDays + s.halfDays * 0.5;
+      acc.ot += s.overtimeHours;
+      acc.rdOt += s.restDayOvertimeHours;
+      return acc;
+    },
+    { marked: 0, absent: 0, ot: 0, rdOt: 0 },
+  );
+
+  const projectedPayslips = selectedEmployees.map((emp, i) => {
+    const s = attendanceSummaries[i];
+    return calculatePhilippinePayslip(emp, {
       periodStart,
       periodEnd,
       creditingDate,
       periodName,
       frequency,
-    })
-  );
+      ...(s
+        ? {
+            overtimeHours: s.overtimeHours,
+            restDayOvertimeHours: s.restDayOvertimeHours,
+            nightDiffHours: s.nightDiffHours,
+            holidayPay: s.holidayPay,
+            tardinessMinutes: s.tardinessMinutes,
+            undertimeMinutes: s.undertimeMinutes,
+            daysWorked: s.daysWorked,
+            attendanceSourced: s.hasMarks,
+          }
+        : {}),
+    });
+  });
 
-  const projectedGross = projectedPayslips.reduce((s, p) => s + p.grossEarnings, 0);
-  const projectedDeductions = projectedPayslips.reduce(
-    (s, p) => s + p.totalDeductions,
-    0
-  );
-  const projectedNet = projectedPayslips.reduce((s, p) => s + p.netPay, 0);
+  const totals = summarizePayslips(projectedPayslips);
+  const projectedGross = totals.totalGrossPay;
+  const projectedDeductions = totals.totalDeductions;
+  const projectedNet = totals.totalNetPay;
+
+  /** Detect whether [periodStart, periodEnd] overlaps any existing run (#20). */
+  const overlappingRuns = runs.filter((r) => {
+    if (!periodStart || !periodEnd) return false;
+    return periodStart <= r.periodEnd && periodEnd >= r.periodStart;
+  });
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setFormError(null);
     if (selectedEmployees.length === 0) {
-      alert('Please select at least one employee for the payroll run.');
+      setFormError('Please select at least one employee for the payroll run.');
+      return;
+    }
+    if (periodStart > periodEnd) {
+      setFormError('The cut-off end date must be on or after the start date.');
+      return;
+    }
+    if (creditingDate < periodEnd) {
+      setFormError('The crediting date must be on or after the cut-off end date.');
+      return;
+    }
+    if (!periodName.trim()) {
+      setFormError('Please provide a cycle description.');
       return;
     }
 
     triggerHapticFeedback();
 
     const newRun: PayrollRun = {
-      id: `run-${Date.now()}`,
-      periodName,
+      id: newId('run'),
+      periodName: periodName.trim(),
       periodStart,
       periodEnd,
       creditingDate,
@@ -100,32 +154,9 @@ export const CreatePayrollRunModal: React.FC<CreatePayrollRunModalProps> = ({
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       totalEmployees: projectedPayslips.length,
-      totalGrossPay: Number(projectedGross.toFixed(2)),
-      totalDeductions: Number(projectedDeductions.toFixed(2)),
-      totalNetPay: Number(projectedNet.toFixed(2)),
-      totalWithholdingTax: Number(
-        projectedPayslips.reduce((s, p) => s + p.statutory.withholdingTax, 0).toFixed(2)
-      ),
-      totalSssEmployee: Number(
-        projectedPayslips.reduce((s, p) => s + p.statutory.sssEmployee, 0).toFixed(2)
-      ),
-      totalSssEmployer: Number(
-        projectedPayslips.reduce((s, p) => s + p.statutory.sssEmployer, 0).toFixed(2)
-      ),
-      totalPhilhealthEmployee: Number(
-        projectedPayslips.reduce((s, p) => s + p.statutory.philhealthEmployee, 0).toFixed(2)
-      ),
-      totalPhilhealthEmployer: Number(
-        projectedPayslips.reduce((s, p) => s + p.statutory.philhealthEmployer, 0).toFixed(2)
-      ),
-      totalPagibigEmployee: Number(
-        projectedPayslips.reduce((s, p) => s + p.statutory.pagibigEmployee, 0).toFixed(2)
-      ),
-      totalPagibigEmployer: Number(
-        projectedPayslips.reduce((s, p) => s + p.statutory.pagibigEmployer, 0).toFixed(2)
-      ),
+      ...totals,
       payslips: projectedPayslips,
-      notes: `Philippine ${frequency} payroll for ${periodName}`,
+      notes: `Philippine ${frequency} payroll for ${periodName.trim()}`,
     };
 
     onCreateRun(newRun);
@@ -155,6 +186,30 @@ export const CreatePayrollRunModal: React.FC<CreatePayrollRunModalProps> = ({
         </div>
 
         <form onSubmit={handleSubmit} className="p-5 sm:p-6 space-y-4 text-xs">
+          {formError && (
+            <div className="p-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 rounded-xl text-xs text-rose-700 dark:text-rose-300 flex items-center gap-2" role="alert">
+              <AlertCircle className="w-4 h-4 flex-shrink-0" />
+              <span>{formError}</span>
+            </div>
+          )}
+
+          {/* Overlapping period warning (#20) */}
+          {overlappingRuns.length > 0 && (
+            <div className="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-xl text-xs text-amber-800 dark:text-amber-200 flex items-start gap-2" role="alert">
+              <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              <span>
+                <strong>Overlapping period:</strong>{' '}
+                {overlappingRuns.map((r) => r.periodName).join(', ')} already covers part of this date range. You can still proceed, but verify this is intentional.
+              </span>
+            </div>
+          )}
+
+          {activeEmployees.length === 0 && (
+            <div className="p-4 bg-slate-50 dark:bg-slate-800/60 border border-dashed border-slate-300 dark:border-slate-700 rounded-xl text-center">
+              <p className="font-bold text-slate-700 dark:text-slate-200">No active employees yet</p>
+              <p className="text-[11px] text-slate-500 mt-1">Add your first employee under Employees to generate a payroll run.</p>
+            </div>
+          )}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
@@ -175,10 +230,29 @@ export const CreatePayrollRunModal: React.FC<CreatePayrollRunModalProps> = ({
               </label>
               <select
                 value={frequency}
-                onChange={(e) => setFrequency(e.target.value as PaymentFrequency)}
+                onChange={(e) => {
+                  const newFreq = e.target.value as PaymentFrequency;
+                  setFrequency(newFreq);
+                  if (newFreq === 'monthly') {
+                    const lastDayNum = new Date(year, month + 1, 0).getDate();
+                    const start = formatLocalDate(new Date(year, month, 1));
+                    const end = formatLocalDate(new Date(year, month + 1, 0));
+                    setPeriodStart(start);
+                    setPeriodEnd(end);
+                    setCreditingDate(end);
+                    setPeriodName(`${monthName} 1-${lastDayNum}, ${year} (Monthly)`);
+                  } else {
+                    setPeriodStart(defaultStart);
+                    setPeriodEnd(defaultEnd);
+                    setCreditingDate(defaultEnd);
+                    setPeriodName(
+                      `${monthName} ${isSecondHalf ? '16-' + new Date(year, month + 1, 0).getDate() : '1-15'}, ${year} (${isSecondHalf ? '2nd' : '1st'} Cut-Off)`
+                    );
+                  }
+                }}
                 className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-lg font-medium text-slate-900"
               >
-                <option value="semi-monthly">Semi-Monthly (Quincena: 15th & 30th)</option>
+                <option value="semi-monthly">Semi-Monthly (Quincena: 15th &amp; 30th)</option>
                 <option value="monthly">Monthly (Full Month)</option>
               </select>
             </div>
@@ -222,6 +296,28 @@ export const CreatePayrollRunModal: React.FC<CreatePayrollRunModalProps> = ({
               />
             </div>
           </div>
+
+          <label className="flex items-start gap-2.5 p-3 border border-slate-300 rounded-lg bg-slate-50/50 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={pullAttendance}
+              onChange={(e) => setPullAttendance(e.target.checked)}
+              className="mt-0.5 rounded text-orange-600 focus:ring-orange-500"
+            />
+            <span>
+              <span className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                <CalendarCheck className="w-3.5 h-3.5 text-orange-600" />
+                Pull days &amp; hours from the work calendar
+              </span>
+              <span className="text-[11px] text-slate-500 block mt-0.5">
+                {pullAttendance
+                  ? attendanceStats.marked > 0
+                    ? `Calendar applied for ${attendanceStats.marked} employee(s): ${attendanceStats.absent} day(s) absent, ${attendanceStats.ot} regular OT hr(s)${attendanceStats.rdOt > 0 ? `, ${attendanceStats.rdOt} rest-day OT hr(s)` : ''}.`
+                    : 'No calendar marks in this period — scheduled defaults used.'
+                  : 'Off — every payslip uses scheduled days and zero hours.'}
+              </span>
+            </span>
+          </label>
 
           <div>
             <div className="flex justify-between items-center mb-2">
@@ -300,7 +396,7 @@ export const CreatePayrollRunModal: React.FC<CreatePayrollRunModalProps> = ({
               disabled={selectedEmployeeIds.length === 0}
               className="px-5 py-2 bg-orange-600 hover:bg-orange-500 disabled:opacity-50 text-white font-bold rounded-lg shadow-md shadow-orange-600/20 flex items-center gap-2 transition active:scale-95"
             >
-              <span>Generate Run & Payslips</span>
+              <span>Generate Run &amp; Payslips</span>
               <ArrowRight className="w-4 h-4" />
             </button>
           </div>

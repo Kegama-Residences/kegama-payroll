@@ -1,20 +1,24 @@
-import React, { useState } from 'react';
-import { PayrollRun, CompanyProfile, PayslipItem, PayrollStatus } from '../../types/payroll';
+import React, { useEffect, useState } from 'react';
+import { PayrollRun, CompanyProfile, PayslipItem, PayrollStatus, Employee } from '../../types/payroll';
 import { formatPHP, formatDate } from '../../utils/currency';
 import { triggerHapticFeedback, printElement } from '../../utils/printService';
 import { PayslipDocument } from '../payslip/PayslipDocument';
+import { calculatePhilippinePayslip, hoursPerDayFor, otRateFor, restDayOtRateFor } from '../../utils/calculations';
+import { numOrEmpty, parseIntInput, parseNumInput } from '../../utils/numberInput';
 import {
   ArrowLeft,
   Printer,
   Edit3,
   Search,
   Users,
-  CheckCircle2
+  CheckCircle2,
+  CalendarCheck,
 } from 'lucide-react';
 
 interface PayrollRunDetailProps {
   run: PayrollRun;
   company: CompanyProfile;
+  employees?: Employee[];
   onBack: () => void;
   onUpdateRunStatus: (runId: string, status: PayrollStatus) => void;
   onUpdatePayslip: (runId: string, updatedPayslip: PayslipItem) => void;
@@ -25,6 +29,7 @@ interface PayrollRunDetailProps {
 export const PayrollRunDetail: React.FC<PayrollRunDetailProps> = ({
   run,
   company,
+  employees,
   onBack,
   onUpdateRunStatus,
   onUpdatePayslip,
@@ -36,6 +41,12 @@ export const PayrollRunDetail: React.FC<PayrollRunDetailProps> = ({
   );
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [editingPayslip, setEditingPayslip] = useState<PayslipItem | null>(null);
+
+  useEffect(() => {
+    setSelectedPayslipId(run.payslips[0]?.id || '');
+    setSearchQuery('');
+    setEditingPayslip(null);
+  }, [run.id]);
 
   const filteredPayslips = run.payslips.filter(
     (p) =>
@@ -49,32 +60,90 @@ export const PayrollRunDetail: React.FC<PayrollRunDetailProps> = ({
 
   const handlePrintSelected = () => {
     if (selectedPayslip) {
-      printElement(`tablet-payslip-doc-${selectedPayslip.id}`);
+      printElement(`tablet-payslip-doc-${selectedPayslip.id}`, `Payslip - ${selectedPayslip.employeeName} - ${selectedPayslip.payslipNumber}`);
     }
   };
 
+  /** Guard: warn if there are unsaved edits before switching payslip (#18). */
+  const handleSelectPayslip = (id: string) => {
+    if (editingPayslip) {
+      if (!window.confirm('You have unsaved edits. Discard them and switch employee?')) return;
+      setEditingPayslip(null);
+    }
+    setSelectedPayslipId(id);
+  };
+
+  /**
+   * Recalculate the payslip using the canonical engine instead of inline math.
+   * This guarantees consistent tax/gross/net with the rest of the system (#1 #2 #12).
+   */
   const handleSaveEdit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingPayslip) return;
 
-    // Recalculate gross and net
-    const gross = Number(
-      (
-        editingPayslip.basicPay +
-        editingPayslip.overtimePay +
-        editingPayslip.deMinimisTotal +
-        editingPayslip.taxableAllowancesTotal +
-        editingPayslip.bonus -
-        editingPayslip.tardinessDeduction
-      ).toFixed(2)
-    );
+    const emp = employees?.find((x) => x.id === editingPayslip.employeeId);
 
-    const net = Number((gross - editingPayslip.totalDeductions).toFixed(2));
+    const allowanceFactor = run.frequency === 'semi-monthly' ? 2 : 1;
+    const baseMonthlyRate = editingPayslip.basicPay * allowanceFactor;
 
+    // Build a synthetic Employee for the engine anchored to the payslip's basic pay.
+    const engineEmployee: Employee = {
+      ...(emp ?? {
+        id: editingPayslip.employeeId,
+        employeeNumber: editingPayslip.employeeNumber,
+        firstName: editingPayslip.employeeName.split(' ')[0] ?? '',
+        lastName: editingPayslip.employeeName.split(' ').slice(1).join(' ') || '',
+        email: editingPayslip.employeeEmail,
+        phone: '',
+        jobTitle: editingPayslip.jobTitle,
+        department: editingPayslip.department,
+        hireDate: '',
+        employmentType: editingPayslip.employmentType,
+        governmentIds: editingPayslip.governmentIds,
+        bankDetails: editingPayslip.bankDetails,
+        status: 'active',
+      }),
+      monthlyRate: baseMonthlyRate,
+      dailyRate: emp?.dailyRate ?? (editingPayslip.daysWorked > 0 ? editingPayslip.basicPay / editingPayslip.daysWorked : 0),
+      hourlyRate: emp?.hourlyRate ?? (editingPayslip.daysWorked > 0 ? (editingPayslip.basicPay / editingPayslip.daysWorked) / hoursPerDayFor(emp?.workSchedule) : 0),
+      allowances: emp?.allowances ?? editingPayslip.allowances.map((a) => ({ ...a, amount: a.amount * allowanceFactor })),
+      customDeductions: emp?.customDeductions ?? editingPayslip.customDeductions.map((d) => ({ ...d, amount: d.amount * allowanceFactor })),
+      statutoryExempt: emp?.statutoryExempt ?? editingPayslip.statutoryExempt,
+    };
+
+    // Re-run the canonical engine with the edited values.
+    const recalculated = calculatePhilippinePayslip(engineEmployee, {
+      periodStart: editingPayslip.periodStart,
+      periodEnd: editingPayslip.periodEnd,
+      creditingDate: editingPayslip.creditingDate,
+      periodName: editingPayslip.periodName,
+      frequency: run.frequency,
+      overtimeHours: editingPayslip.overtimeHours,
+      restDayOvertimeHours: editingPayslip.restDayOvertimeHours ?? 0,
+      nightDiffHours: editingPayslip.nightDiffHours ?? 0,
+      holidayPay: editingPayslip.holidayPay ?? 0,
+      bonus: editingPayslip.bonus,
+      tardinessMinutes: editingPayslip.tardinessMinutes ?? 0,
+      undertimeMinutes: editingPayslip.undertimeMinutes ?? 0,
+      daysWorked: editingPayslip.daysWorked,
+      attendanceSourced: editingPayslip.attendanceSourced,
+    });
+
+    // Preserve the original payslip metadata (id, number, period, etc.) — only
+    // update the financial fields that the engine produces.
     const updated: PayslipItem = {
       ...editingPayslip,
-      grossEarnings: gross,
-      netPay: net,
+      overtimeHours: recalculated.overtimeHours,
+      overtimePay: recalculated.overtimePay,
+      restDayOvertimeHours: recalculated.restDayOvertimeHours,
+      restDayOvertimePay: recalculated.restDayOvertimePay,
+      bonus: recalculated.bonus,
+      tardinessMinutes: editingPayslip.tardinessMinutes,
+      tardinessDeduction: recalculated.tardinessDeduction,
+      grossEarnings: recalculated.grossEarnings,
+      statutory: recalculated.statutory,
+      totalDeductions: recalculated.totalDeductions,
+      netPay: recalculated.netPay,
     };
 
     onUpdatePayslip(run.id, updated);
@@ -84,7 +153,7 @@ export const PayrollRunDetail: React.FC<PayrollRunDetailProps> = ({
   return (
     <div className="p-3 sm:p-6 max-w-7xl mx-auto space-y-4">
       {/* Top Header Card */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-xl shadow-sm">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 sm:p-5 rounded-2xl shadow-sm">
         <div className="flex items-center gap-3">
           <button
             onClick={() => {
@@ -176,7 +245,7 @@ export const PayrollRunDetail: React.FC<PayrollRunDetailProps> = ({
 
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3.5 rounded-xl shadow-sm">
           <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
-            Statutory & BIR Deductions
+            Statutory &amp; BIR Deductions
           </span>
           <div className="flex items-center justify-between mt-1">
             <span className="text-base sm:text-lg font-bold font-mono text-rose-800 dark:text-rose-400 tabular-nums">
@@ -214,14 +283,20 @@ export const PayrollRunDetail: React.FC<PayrollRunDetailProps> = ({
           </div>
 
           <div className="space-y-1.5 max-h-[70vh] overflow-y-auto pr-1">
-            {filteredPayslips.map((p) => {
+            {filteredPayslips.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center dark:border-slate-700 dark:bg-slate-900">
+                <Search className="mx-auto h-6 w-6 text-slate-300" />
+                <p className="mt-3 text-sm font-bold text-slate-700 dark:text-slate-200">No payslips found</p>
+                <p className="mt-1 text-xs text-slate-400">Try another employee name, department, or ID.</p>
+              </div>
+            ) : filteredPayslips.map((p) => {
               const isSelected = p.id === selectedPayslip?.id;
               return (
                 <div
                   key={p.id}
                   onClick={() => {
                     triggerHapticFeedback();
-                    setSelectedPayslipId(p.id);
+                    handleSelectPayslip(p.id);
                   }}
                   className={`p-3 rounded-lg border transition cursor-pointer flex justify-between items-center ${
                     isSelected
@@ -237,6 +312,15 @@ export const PayrollRunDetail: React.FC<PayrollRunDetailProps> = ({
                       <span className="text-[10px] font-mono text-slate-500">
                         {p.employeeNumber}
                       </span>
+                      {p.attendanceSourced && (
+                        <span
+                          title="Days &amp; hours pulled from the work calendar"
+                          className="inline-flex items-center gap-0.5 px-1.5 py-px rounded-full text-[9px] font-bold uppercase tracking-wide bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800"
+                        >
+                          <CalendarCheck className="w-2.5 h-2.5" />
+                          Cal
+                        </span>
+                      )}
                     </div>
                     <p className="text-[11px] text-slate-500 truncate">
                       {p.jobTitle} • {p.bankDetails.bankName}
@@ -355,21 +439,57 @@ export const PayrollRunDetail: React.FC<PayrollRunDetailProps> = ({
             <form onSubmit={handleSaveEdit} className="space-y-3 text-xs">
               <div>
                 <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Overtime Hours (Regular Day 125%)
+                  Overtime Hours ({(() => {
+                    const emp = employees?.find((x) => x.id === editingPayslip.employeeId);
+                    const rate = emp ? otRateFor(emp) : (editingPayslip.overtimeHours > 0 ? editingPayslip.overtimePay / editingPayslip.overtimeHours : 0);
+                    return rate > 0 ? `${formatPHP(rate)}/hr regular OT` : 'regular OT rate';
+                  })()})
                 </label>
                 <input
                   type="number"
                   min="0"
                   step="0.5"
-                  value={editingPayslip.overtimeHours || 0}
+                  value={numOrEmpty(editingPayslip.overtimeHours)}
+                  placeholder="0"
                   onChange={(e) => {
-                    const hours = parseFloat(e.target.value) || 0;
-                    const otRate = (editingPayslip.basicPay / (11 * 8)) * 1.25;
-                    const otAmount = Number((hours * otRate).toFixed(2));
+                    const hours = parseNumInput(e.target.value);
+                    const emp = employees?.find((x) => x.id === editingPayslip.employeeId);
+                    const rate = emp ? otRateFor(emp)
+                      : editingPayslip.overtimeHours > 0 && editingPayslip.overtimePay > 0
+                      ? editingPayslip.overtimePay / editingPayslip.overtimeHours
+                      : 0;
                     setEditingPayslip({
                       ...editingPayslip,
                       overtimeHours: hours,
-                      overtimePay: otAmount,
+                      overtimePay: Math.round(hours * rate * 100) / 100,
+                    });
+                  }}
+                  className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-lg font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Rest-Day OT Hours ({(() => {
+                    const emp = employees?.find((x) => x.id === editingPayslip.employeeId);
+                    const rate = emp ? restDayOtRateFor(emp) : 0;
+                    return rate > 0 ? `${formatPHP(rate)}/hr — DOLE 130%` : 'DOLE 130% rate';
+                  })()})
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.5"
+                  value={numOrEmpty(editingPayslip.restDayOvertimeHours ?? 0)}
+                  placeholder="0"
+                  onChange={(e) => {
+                    const hours = parseNumInput(e.target.value);
+                    const emp = employees?.find((x) => x.id === editingPayslip.employeeId);
+                    const rate = emp ? restDayOtRateFor(emp) : 0;
+                    setEditingPayslip({
+                      ...editingPayslip,
+                      restDayOvertimeHours: hours,
+                      restDayOvertimePay: Math.round(hours * rate * 100) / 100,
                     });
                   }}
                   className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-lg font-mono"
@@ -384,11 +504,12 @@ export const PayrollRunDetail: React.FC<PayrollRunDetailProps> = ({
                   type="number"
                   min="0"
                   step="100"
-                  value={editingPayslip.bonus || 0}
+                  value={numOrEmpty(editingPayslip.bonus)}
+                  placeholder="0"
                   onChange={(e) =>
                     setEditingPayslip({
                       ...editingPayslip,
-                      bonus: parseFloat(e.target.value) || 0,
+                      bonus: parseNumInput(e.target.value),
                     })
                   }
                   className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-lg font-mono"
@@ -403,15 +524,13 @@ export const PayrollRunDetail: React.FC<PayrollRunDetailProps> = ({
                   type="number"
                   min="0"
                   step="1"
-                  value={editingPayslip.tardinessMinutes || 0}
+                  value={numOrEmpty(editingPayslip.tardinessMinutes)}
+                  placeholder="0"
                   onChange={(e) => {
-                    const mins = parseInt(e.target.value) || 0;
-                    const minRate = (editingPayslip.basicPay / (11 * 8 * 60));
-                    const lateDed = Number((mins * minRate).toFixed(2));
+                    const mins = parseIntInput(e.target.value);
                     setEditingPayslip({
                       ...editingPayslip,
                       tardinessMinutes: mins,
-                      tardinessDeduction: lateDed,
                     });
                   }}
                   className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-lg font-mono"
@@ -430,7 +549,7 @@ export const PayrollRunDetail: React.FC<PayrollRunDetailProps> = ({
                   type="submit"
                   className="px-4 py-2 bg-orange-600 hover:bg-orange-500 text-white rounded-lg font-bold shadow-md shadow-orange-600/20"
                 >
-                  Apply & Recalculate
+                  Apply &amp; Recalculate
                 </button>
               </div>
             </form>

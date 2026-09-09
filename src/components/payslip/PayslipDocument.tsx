@@ -19,7 +19,11 @@ export const PayslipDocument: React.FC<PayslipDocumentProps> = ({
 }) => {
   const [qrCodeUrl, setQrCodeUrl] = useState<string>('');
 
+  // Generate QR code once on mount and whenever the payslip ID changes.
+  // The dependency is narrowed to payslip.id so bulk-print scenarios don't
+  // re-fire QR generation on every parent re-render (#16).
   useEffect(() => {
+    let cancelled = false;
     const payload = JSON.stringify({
       ref: payslip.payslipNumber,
       emp: payslip.employeeName,
@@ -30,13 +34,15 @@ export const PayslipDocument: React.FC<PayslipDocumentProps> = ({
       co: company.name,
       tinCo: company.tin,
     });
-
     generateQRCodeDataUrl(payload).then((url) => {
-      setQrCodeUrl(url);
+      if (!cancelled) setQrCodeUrl(url);
     });
-  }, [payslip, company]);
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [payslip.id]);
 
   const stat = payslip.statutory;
+  const employerRemittanceTotal = stat.sssEmployer + stat.philhealthEmployer + stat.pagibigEmployer;
 
   // -------------------------------------------------------------
   // LAYOUT 1: QUARTER SHEET (4-IN-1 LETTER PAGE - 2x2 GRID)
@@ -44,22 +50,23 @@ export const PayslipDocument: React.FC<PayslipDocumentProps> = ({
   // -------------------------------------------------------------
   if (layout === 'quarter') {
     return (
-      <div
+      <article
         id={elementId}
-        className="bg-white text-slate-900 border border-dashed border-orange-400 p-3 flex flex-col justify-between h-full font-sans text-[10px] leading-tight select-none relative overflow-hidden"
+        aria-label={`Payslip ${payslip.payslipNumber} for ${payslip.employeeName}`}
+        className="bg-white text-slate-900 border border-dashed border-slate-300 p-3 flex flex-col justify-between h-full font-sans text-[10px] leading-tight select-none relative overflow-hidden"
       >
         {/* Scissor Cut Mark at Corner */}
-        <div className="absolute top-1 right-1 text-[8px] text-orange-500 font-mono flex items-center gap-0.5">
+        <div className="absolute top-1 right-1 text-[8px] text-slate-400 font-mono flex items-center gap-0.5">
           <span>✂</span>
           <span className="text-[7px]">cut</span>
         </div>
 
         {/* Top Header */}
         <div>
-          <div className="border-b border-orange-500 pb-1 flex justify-between items-start">
+          <div className="border-b border-slate-300 pb-1 flex justify-between items-start">
             <div className="pr-2">
               <div className="flex items-center gap-1.5">
-                <BrandLogo className="w-3.5 h-3.5 text-orange-600 inline-block flex-shrink-0" />
+                <BrandLogo className="w-3.5 h-3.5 text-slate-800 inline-block flex-shrink-0" />
                 <h3 className="font-black text-[11px] text-slate-950 uppercase tracking-tight truncate max-w-[180px]">
                   {company.name}
                 </h3>
@@ -69,7 +76,7 @@ export const PayslipDocument: React.FC<PayslipDocumentProps> = ({
               </p>
             </div>
             <div className="text-right">
-              <span className="px-1 py-0.2 rounded bg-orange-100 text-orange-900 font-bold text-[8px] uppercase tracking-wider block">
+              <span className="px-1 py-0.2 rounded border border-slate-300 bg-white text-slate-800 font-bold text-[8px] uppercase tracking-wider block">
                 PAYSLIP
               </span>
               <span className="font-mono font-bold text-[9px] text-slate-800 block mt-0.5">
@@ -79,7 +86,7 @@ export const PayslipDocument: React.FC<PayslipDocumentProps> = ({
           </div>
 
           {/* Employee & Cut-Off Banner */}
-          <div className="bg-orange-50/80 border-y border-orange-200 py-1 px-1.5 my-1 grid grid-cols-2 gap-1 text-[9.5px]">
+          <div className="bg-white border-y border-slate-200 py-1 px-1.5 my-1 grid grid-cols-2 gap-1 text-[9.5px]">
             <div>
               <span className="text-[8px] text-slate-500 uppercase font-bold block">Employee</span>
               <strong className="text-slate-950 text-[10px] truncate block">{payslip.employeeName}</strong>
@@ -90,7 +97,7 @@ export const PayslipDocument: React.FC<PayslipDocumentProps> = ({
               <span className="font-medium text-slate-800 block text-[9px]">
                 {formatDate(payslip.periodStart)} – {formatDate(payslip.periodEnd)}
               </span>
-              <span className="font-bold text-orange-700 block text-[9px]">
+              <span className="font-semibold text-slate-900 block text-[9px]">
                 Credited: {formatDate(payslip.creditingDate)}
               </span>
             </div>
@@ -110,8 +117,20 @@ export const PayslipDocument: React.FC<PayslipDocumentProps> = ({
               </div>
               {payslip.overtimePay > 0 && (
                 <div className="flex justify-between text-[9px]">
-                  <span className="text-slate-700">Overtime (125%)</span>
+                  <span className="text-slate-700">Overtime ({payslip.overtimeHours}h × {payslip.overtimeHours > 0 ? formatPHP(Math.round((payslip.overtimePay / payslip.overtimeHours) * 100) / 100) : formatPHP(0)})</span>
                   <span className="font-mono tabular-nums">{formatPHP(payslip.overtimePay)}</span>
+                </div>
+              )}
+              {(payslip.nightDiffPay ?? 0) > 0 && (
+                <div className="flex justify-between text-[9px]">
+                  <span className="text-slate-700">Night diff (10% × {payslip.nightDiffHours}h)</span>
+                  <span className="font-mono tabular-nums">{formatPHP(payslip.nightDiffPay ?? 0)}</span>
+                </div>
+              )}
+              {(payslip.holidayPay ?? 0) > 0 && (
+                <div className="flex justify-between text-[9px]">
+                  <span className="text-slate-700">Holiday pay</span>
+                  <span className="font-mono tabular-nums">{formatPHP(payslip.holidayPay ?? 0)}</span>
                 </div>
               )}
               {payslip.deMinimisTotal > 0 && (
@@ -133,7 +152,7 @@ export const PayslipDocument: React.FC<PayslipDocumentProps> = ({
                 </div>
               )}
               {payslip.tardinessDeduction > 0 && (
-                <div className="flex justify-between text-[9px] text-rose-700">
+                <div className="flex justify-between text-[9px] text-slate-700">
                   <span>Tardiness</span>
                   <span className="font-mono tabular-nums">-{formatPHP(payslip.tardinessDeduction)}</span>
                 </div>
@@ -150,18 +169,24 @@ export const PayslipDocument: React.FC<PayslipDocumentProps> = ({
                 <span>Deductions</span>
                 <span className="font-mono text-[7.5px] text-slate-400">EE SHARE</span>
               </div>
-              <div className="flex justify-between text-[9px]">
-                <span className="text-slate-700">SSS EE</span>
-                <span className="font-mono tabular-nums">{formatPHP(stat.sssEmployee)}</span>
-              </div>
-              <div className="flex justify-between text-[9px]">
-                <span className="text-slate-700">PhilHealth</span>
-                <span className="font-mono tabular-nums">{formatPHP(stat.philhealthEmployee)}</span>
-              </div>
-              <div className="flex justify-between text-[9px]">
-                <span className="text-slate-700">Pag-IBIG</span>
-                <span className="font-mono tabular-nums">{formatPHP(stat.pagibigEmployee)}</span>
-              </div>
+              {stat.sssEmployee > 0 && (
+                <div className="flex justify-between text-[9px]">
+                  <span className="text-slate-700">SSS EE</span>
+                  <span className="font-mono tabular-nums">{formatPHP(stat.sssEmployee)}</span>
+                </div>
+              )}
+              {stat.philhealthEmployee > 0 && (
+                <div className="flex justify-between text-[9px]">
+                  <span className="text-slate-700">PhilHealth</span>
+                  <span className="font-mono tabular-nums">{formatPHP(stat.philhealthEmployee)}</span>
+                </div>
+              )}
+              {stat.pagibigEmployee > 0 && (
+                <div className="flex justify-between text-[9px]">
+                  <span className="text-slate-700">Pag-IBIG</span>
+                  <span className="font-mono tabular-nums">{formatPHP(stat.pagibigEmployee)}</span>
+                </div>
+              )}
               <div className="flex justify-between text-[9px]">
                 <span className="text-slate-700">BIR Tax</span>
                 <span className="font-mono tabular-nums">{formatPHP(stat.withholdingTax)}</span>
@@ -172,7 +197,7 @@ export const PayslipDocument: React.FC<PayslipDocumentProps> = ({
                   <span className="font-mono tabular-nums">{formatPHP(d.amount)}</span>
                 </div>
               ))}
-              <div className="border-t border-slate-200 pt-0.5 flex justify-between font-bold text-[9px] text-rose-800">
+              <div className="border-t border-slate-200 pt-0.5 flex justify-between font-bold text-[9px] text-slate-900">
                 <span>Total Ded.</span>
                 <span className="font-mono tabular-nums">-{formatPHP(payslip.totalDeductions)}</span>
               </div>
@@ -180,19 +205,19 @@ export const PayslipDocument: React.FC<PayslipDocumentProps> = ({
           </div>
         </div>
 
-        {/* Bottom Section: Net Take-Home Pay & Signatures */}
+        {/* Bottom Section: Net Take-Home Pay & Signatures (Ink-Friendly) */}
         <div className="space-y-1 pt-1">
-          {/* Joy Orange Net Pay Callout */}
-          <div className="bg-gradient-to-r from-orange-600 to-orange-500 text-white rounded px-2 py-1 flex justify-between items-center shadow-xs">
+          {/* Boxed High-Legibility Net Pay Callout without Ink Waste */}
+          <div className="border-2 border-slate-900 bg-white text-slate-950 rounded px-2 py-1 flex justify-between items-center">
             <div>
-              <span className="text-[7.5px] font-bold uppercase tracking-widest text-orange-100 block">
+              <span className="text-[7.5px] font-black uppercase tracking-wider text-slate-800 block">
                 NET TAKE-HOME PAY
               </span>
-              <span className="text-[8px] text-orange-100 truncate block">
+              <span className="text-[8px] text-slate-600 truncate block">
                 {payslip.bankDetails.bankName} ({payslip.bankDetails.accountNumber})
               </span>
             </div>
-            <span className="font-mono font-black text-sm sm:text-base tracking-tight tabular-nums text-white">
+            <span className="font-mono font-black text-sm sm:text-base tracking-tight tabular-nums text-slate-950">
               {formatPHP(payslip.netPay)}
             </span>
           </div>
@@ -211,7 +236,7 @@ export const PayslipDocument: React.FC<PayslipDocumentProps> = ({
             </div>
           </div>
         </div>
-      </div>
+      </article>
     );
   }
 
@@ -220,17 +245,18 @@ export const PayslipDocument: React.FC<PayslipDocumentProps> = ({
   // Formatted for 8.5 x 11 inches with Joy Orange styling
   // -------------------------------------------------------------
   return (
-    <div
+    <article
       id={elementId}
-      className="payslip-print-sheet bg-white text-slate-900 mx-auto border border-slate-300 print:border-none print:shadow-none print:m-0 print:p-0 font-sans p-6 sm:p-8 max-w-4xl text-xs rounded-xl shadow-md select-none"
+      aria-label={`Payslip ${payslip.payslipNumber} for ${payslip.employeeName}`}
+      className="payslip-print-sheet bg-white text-slate-900 mx-auto border border-slate-300 print:border-none print:shadow-none print:m-0 print:p-0 font-sans p-6 sm:p-8 max-w-4xl text-xs rounded-xl shadow-xs select-none"
       style={{ minHeight: '260mm' }}
     >
       {/* Formal Corporate Header */}
       <div className="border-b-2 border-slate-900 pb-3.5 flex flex-col sm:flex-row justify-between items-start gap-4">
         <div>
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-orange-600 text-white flex items-center justify-center p-1.5 flex-shrink-0">
-              <BrandLogo className="w-full h-full text-white" />
+            <div className="w-8 h-8 rounded-lg border border-slate-300 bg-white text-slate-800 flex items-center justify-center p-1.5 flex-shrink-0">
+              <BrandLogo className="w-full h-full text-slate-800" />
             </div>
             <div>
               <h1 className="text-base sm:text-lg font-black tracking-tight text-slate-950 uppercase leading-none">
@@ -256,8 +282,8 @@ export const PayslipDocument: React.FC<PayslipDocumentProps> = ({
         </div>
 
         {/* Payslip Header Card */}
-        <div className="text-left sm:text-right bg-orange-50/80 border border-orange-200 p-3 sm:min-w-[210px] w-full sm:w-auto rounded-lg">
-          <div className="text-xs font-black tracking-wider uppercase text-orange-900 border-b border-orange-200 pb-1 mb-1">
+        <div className="text-left sm:text-right bg-white border border-slate-300 p-3 sm:min-w-[210px] w-full sm:w-auto rounded-lg">
+          <div className="text-xs font-black tracking-wider uppercase text-slate-900 border-b border-slate-200 pb-1 mb-1">
             OFFICIAL PAYSLIP (US LETTER)
           </div>
           <div className="text-[11px] text-slate-600">Ref No:</div>
@@ -265,13 +291,13 @@ export const PayslipDocument: React.FC<PayslipDocumentProps> = ({
             {payslip.payslipNumber}
           </div>
           <div className="text-[11px] text-slate-600 mt-1">
-            Crediting Date: <strong className="text-orange-700">{formatDate(payslip.creditingDate)}</strong>
+            Crediting Date: <strong className="text-slate-950 font-bold">{formatDate(payslip.creditingDate)}</strong>
           </div>
         </div>
       </div>
 
       {/* Employee Identification Grid */}
-      <div className="my-4 border border-slate-300 bg-slate-50/70 p-3.5 rounded-lg grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-[11px]">
+      <div className="my-3 border border-slate-200 bg-white p-3.5 rounded-lg grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-[11px]">
         <div>
           <span className="text-slate-500 uppercase tracking-wider text-[9px] font-bold block">
             Employee Name
@@ -279,7 +305,7 @@ export const PayslipDocument: React.FC<PayslipDocumentProps> = ({
           <span className="font-bold text-slate-950 text-xs block truncate">
             {payslip.employeeName}
           </span>
-          <span className="font-mono text-[10px] text-orange-700">{payslip.employeeNumber}</span>
+          <span className="font-mono text-[10px] text-slate-800">{payslip.employeeNumber}</span>
         </div>
 
         <div>
@@ -330,15 +356,12 @@ export const PayslipDocument: React.FC<PayslipDocumentProps> = ({
       </div>
 
       {/* Main Financial Ledger: Earnings vs Deductions */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 my-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 my-3">
         {/* Earnings Table */}
         <div className="border border-slate-300 rounded-lg overflow-hidden flex flex-col justify-between">
           <div>
-            <div className="bg-orange-50 px-3.5 py-2 border-b border-orange-200 flex justify-between items-center text-[11px] font-bold text-orange-950 uppercase tracking-wider">
-              <span className="flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-orange-500"></span>
-                EARNINGS
-              </span>
+            <div className="bg-slate-50/70 px-3.5 py-1.5 border-b border-slate-200 flex justify-between items-center text-[11px] font-bold text-slate-900 uppercase tracking-wider">
+              <span>EARNINGS</span>
               <span className="font-mono text-[10px] text-slate-600 font-normal">AMOUNT (PHP)</span>
             </div>
 
@@ -356,11 +379,44 @@ export const PayslipDocument: React.FC<PayslipDocumentProps> = ({
               {payslip.overtimePay > 0 && (
                 <div className="flex justify-between items-center py-1">
                   <div>
-                    <span className="text-slate-800">Regular Overtime (125%)</span>
-                    <span className="text-[10px] text-slate-500 ml-1.5">({payslip.overtimeHours} hrs)</span>
+                    <span className="text-slate-800">Regular Overtime</span>
+                    <span className="text-[10px] text-slate-500 ml-1.5">({payslip.overtimeHours} hrs × {payslip.overtimeHours > 0 ? formatPHP(Math.round((payslip.overtimePay / payslip.overtimeHours) * 100) / 100) : formatPHP(0)})</span>
                   </div>
                   <span className="font-mono text-slate-900 tabular-nums">
                     {formatPHP(payslip.overtimePay)}
+                  </span>
+                </div>
+              )}
+
+              {(payslip.restDayOvertimePay ?? 0) > 0 && (
+                <div className="flex justify-between items-center py-1">
+                  <div>
+                    <span className="text-slate-800">Rest-Day Overtime (130%)</span>
+                    <span className="text-[10px] text-slate-500 ml-1.5">({payslip.restDayOvertimeHours} hrs)</span>
+                  </div>
+                  <span className="font-mono text-slate-900 tabular-nums">
+                    {formatPHP(payslip.restDayOvertimePay ?? 0)}
+                  </span>
+                </div>
+              )}
+
+              {(payslip.nightDiffPay ?? 0) > 0 && (
+                <div className="flex justify-between items-center py-1">
+                  <div>
+                    <span className="text-slate-800">Night Differential (10%)</span>
+                    <span className="text-[10px] text-slate-500 ml-1.5">({payslip.nightDiffHours} hrs)</span>
+                  </div>
+                  <span className="font-mono text-slate-900 tabular-nums">
+                    {formatPHP(payslip.nightDiffPay ?? 0)}
+                  </span>
+                </div>
+              )}
+
+              {(payslip.holidayPay ?? 0) > 0 && (
+                <div className="flex justify-between items-center py-1">
+                  <span className="text-slate-800">Regular Holiday Pay (200%)</span>
+                  <span className="font-mono text-slate-900 tabular-nums">
+                    {formatPHP(payslip.holidayPay ?? 0)}
                   </span>
                 </div>
               )}
@@ -370,7 +426,7 @@ export const PayslipDocument: React.FC<PayslipDocumentProps> = ({
                 <div key={al.id} className="flex justify-between items-center py-1">
                   <div>
                     <span className="text-slate-800">{al.name}</span>
-                    <span className="text-[9px] text-emerald-700 bg-emerald-50 px-1 py-0.2 rounded ml-1 font-medium">De Minimis</span>
+                    <span className="text-[9px] text-slate-600 border border-slate-200 px-1 py-0.2 rounded ml-1 font-medium">De Minimis</span>
                   </div>
                   <span className="font-mono text-slate-800 tabular-nums">
                     {formatPHP(al.amount)}
@@ -401,7 +457,7 @@ export const PayslipDocument: React.FC<PayslipDocumentProps> = ({
               )}
 
               {payslip.tardinessDeduction > 0 && (
-                <div className="flex justify-between items-center py-1 text-rose-700">
+                <div className="flex justify-between items-center py-1 text-slate-700">
                   <span>Less: Tardiness / Undertime ({payslip.tardinessMinutes} mins)</span>
                   <span className="font-mono tabular-nums">
                     -{formatPHP(payslip.tardinessDeduction)}
@@ -411,7 +467,7 @@ export const PayslipDocument: React.FC<PayslipDocumentProps> = ({
             </div>
           </div>
 
-          <div className="bg-orange-50/70 border-t border-orange-200 px-3.5 py-2 flex justify-between items-center font-bold text-xs text-slate-900">
+          <div className="bg-white border-t-2 border-slate-900 px-3.5 py-2 flex justify-between items-center font-bold text-xs text-slate-950">
             <span className="uppercase tracking-wider">TOTAL GROSS EARNINGS</span>
             <span className="font-mono text-sm tabular-nums text-slate-950">
               {formatPHP(payslip.grossEarnings)}
@@ -422,41 +478,47 @@ export const PayslipDocument: React.FC<PayslipDocumentProps> = ({
         {/* Deductions Table */}
         <div className="border border-slate-300 rounded-lg overflow-hidden flex flex-col justify-between">
           <div>
-            <div className="bg-orange-50 px-3.5 py-2 border-b border-orange-200 flex justify-between items-center text-[11px] font-bold text-orange-950 uppercase tracking-wider">
+            <div className="bg-slate-50/70 px-3.5 py-1.5 border-b border-slate-200 flex justify-between items-center text-[11px] font-bold text-slate-900 uppercase tracking-wider">
               <span>MANDATORY & STATUTORY DEDUCTIONS</span>
               <span className="font-mono text-[10px] text-slate-600 font-normal">EE SHARE (PHP)</span>
             </div>
 
             <div className="p-3 divide-y divide-slate-100 space-y-1 text-[11px]">
-              <div className="flex justify-between items-center py-1">
-                <div>
-                  <span className="text-slate-900 font-medium">SSS Contribution</span>
-                  <span className="text-[9px] text-slate-500 ml-1.5 font-mono">(EE)</span>
+              {stat.sssEmployee > 0 && (
+                <div className="flex justify-between items-center py-1">
+                  <div>
+                    <span className="text-slate-900 font-medium">SSS Contribution</span>
+                    <span className="text-[9px] text-slate-500 ml-1.5 font-mono">(EE)</span>
+                  </div>
+                  <span className="font-mono text-slate-900 tabular-nums">
+                    {formatPHP(stat.sssEmployee)}
+                  </span>
                 </div>
-                <span className="font-mono text-slate-900 tabular-nums">
-                  {formatPHP(stat.sssEmployee)}
-                </span>
-              </div>
+              )}
 
-              <div className="flex justify-between items-center py-1">
-                <div>
-                  <span className="text-slate-900 font-medium">PhilHealth Contribution</span>
-                  <span className="text-[9px] text-slate-500 ml-1.5 font-mono">(EE 2.5%)</span>
+              {stat.philhealthEmployee > 0 && (
+                <div className="flex justify-between items-center py-1">
+                  <div>
+                    <span className="text-slate-900 font-medium">PhilHealth Contribution</span>
+                    <span className="text-[9px] text-slate-500 ml-1.5 font-mono">(EE 2.5%)</span>
+                  </div>
+                  <span className="font-mono text-slate-900 tabular-nums">
+                    {formatPHP(stat.philhealthEmployee)}
+                  </span>
                 </div>
-                <span className="font-mono text-slate-900 tabular-nums">
-                  {formatPHP(stat.philhealthEmployee)}
-                </span>
-              </div>
+              )}
 
-              <div className="flex justify-between items-center py-1">
-                <div>
-                  <span className="text-slate-900 font-medium">Pag-IBIG / HDMF Contribution</span>
-                  <span className="text-[9px] text-slate-500 ml-1.5 font-mono">(EE)</span>
+              {stat.pagibigEmployee > 0 && (
+                <div className="flex justify-between items-center py-1">
+                  <div>
+                    <span className="text-slate-900 font-medium">Pag-IBIG / HDMF Contribution</span>
+                    <span className="text-[9px] text-slate-500 ml-1.5 font-mono">(EE)</span>
+                  </div>
+                  <span className="font-mono text-slate-900 tabular-nums">
+                    {formatPHP(stat.pagibigEmployee)}
+                  </span>
                 </div>
-                <span className="font-mono text-slate-900 tabular-nums">
-                  {formatPHP(stat.pagibigEmployee)}
-                </span>
-              </div>
+              )}
 
               <div className="flex justify-between items-center py-1">
                 <div>
@@ -479,35 +541,36 @@ export const PayslipDocument: React.FC<PayslipDocumentProps> = ({
             </div>
           </div>
 
-          <div className="bg-orange-50/70 border-t border-orange-200 px-3.5 py-2 flex justify-between items-center font-bold text-xs text-slate-900">
+          <div className="bg-white border-t-2 border-slate-900 px-3.5 py-2 flex justify-between items-center font-bold text-xs text-slate-950">
             <span className="uppercase tracking-wider">TOTAL DEDUCTIONS</span>
-            <span className="font-mono text-sm tabular-nums text-rose-800">
+            <span className="font-mono text-sm tabular-nums text-slate-950">
               -{formatPHP(payslip.totalDeductions)}
             </span>
           </div>
         </div>
       </div>
 
-      {/* Joy Orange Net Pay Callout Banner */}
-      <div className="border-2 border-orange-500 bg-gradient-to-r from-orange-600 via-orange-500 to-amber-500 text-white p-4 rounded-xl shadow-md flex flex-col sm:flex-row justify-between items-center gap-2 my-4">
+      {/* Ink-Friendly Clean Net Pay Callout Box (Zero Dark Gradient Ink Waste) */}
+      <div className="border-2 border-slate-900 bg-white text-slate-950 p-3.5 rounded-xl flex flex-col sm:flex-row justify-between items-center gap-2 my-3">
         <div>
-          <span className="text-[10px] font-black uppercase tracking-widest text-orange-100 block">
+          <span className="text-[10px] font-black uppercase tracking-widest text-slate-800 block">
             NET TAKE-HOME PAY (PHILIPPINE PESOS)
           </span>
-          <p className="text-[11px] text-orange-100 mt-0.5">
+          <p className="text-[11px] text-slate-600 mt-0.5">
             Credited directly to {payslip.bankDetails.bankName} Account {payslip.bankDetails.accountNumber}
           </p>
         </div>
 
         <div className="text-right">
-          <span className="font-mono text-2xl sm:text-3xl font-black tracking-tight text-white tabular-nums">
+          <span className="font-mono text-2xl sm:text-3xl font-black tracking-tight text-slate-950 tabular-nums">
             {formatPHP(payslip.netPay)}
           </span>
         </div>
       </div>
 
-      {/* Employer Remittances (DOLE Transparency) */}
-      <div className="border border-slate-300 bg-slate-50/50 p-2.5 rounded-lg text-[10px] text-slate-600 grid grid-cols-2 sm:grid-cols-4 gap-2">
+      {/* Employer Remittances (DOLE Transparency) — hidden when exempt (nothing to remit) */}
+      {employerRemittanceTotal > 0 && (
+      <div className="border border-slate-200 bg-white p-2.5 rounded-lg text-[10px] text-slate-600 grid grid-cols-2 sm:grid-cols-4 gap-2">
         <div className="col-span-2 sm:col-span-4 font-bold text-slate-800 uppercase tracking-wider text-[9px] border-b border-slate-200 pb-1">
           EMPLOYER STATUTORY REMITTANCES (Non-deductible from employee salary)
         </div>
@@ -526,10 +589,11 @@ export const PayslipDocument: React.FC<PayslipDocumentProps> = ({
         <div>
           <span className="text-slate-500 block">Total Remittance:</span>
           <strong className="font-mono text-slate-900">
-            {formatPHP(stat.sssEmployer + stat.philhealthEmployer + stat.pagibigEmployer)}
+            {formatPHP(employerRemittanceTotal)}
           </strong>
         </div>
       </div>
+      )}
 
       {/* Compliance Acknowledgement & Signatures */}
       <div className="mt-5 pt-3 border-t border-slate-300 space-y-4">
@@ -541,8 +605,12 @@ export const PayslipDocument: React.FC<PayslipDocumentProps> = ({
           {/* QR Verification */}
           <div className="flex items-center gap-2">
             <div className="w-16 h-16 border border-slate-300 bg-white p-1 rounded flex-shrink-0 shadow-xs">
-              {qrCodeUrl && (
-                <img src={qrCodeUrl} alt="QR Token" className="w-full h-full object-contain" />
+              {qrCodeUrl ? (
+                <img src={qrCodeUrl} alt={`Verification QR for ${payslip.payslipNumber}`} className="w-full h-full object-contain" />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center text-[8px] font-mono text-slate-400" aria-hidden="true">
+                  {payslip.payslipNumber.slice(-8)}
+                </div>
               )}
             </div>
             <div className="text-[9px] text-slate-500 leading-tight">
@@ -554,9 +622,7 @@ export const PayslipDocument: React.FC<PayslipDocumentProps> = ({
 
           {/* Prepared By / Corporate Signatory */}
           <div className="text-center">
-            <div className="border-b border-slate-400 pb-1 font-serif italic text-xs text-slate-800">
-              {company.authorizedSignatoryName}
-            </div>
+            <div className="border-b border-slate-400 pb-1 h-6" aria-hidden="true" />
             <span className="font-bold text-[10px] text-slate-900 block mt-0.5">
               {company.authorizedSignatoryName}
             </span>
@@ -582,6 +648,6 @@ export const PayslipDocument: React.FC<PayslipDocumentProps> = ({
             'Confidential document issued pursuant to DOLE Labor Code Article 103 and BIR Withholding Regulations.'}
         </div>
       </div>
-    </div>
+    </article>
   );
 };

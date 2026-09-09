@@ -18,10 +18,21 @@ export const BulkPayslipPrintView: React.FC<BulkPayslipPrintViewProps> = ({
 }) => {
   // '4up' fits 4 payslips per 8.5x11" Letter page; 'full' is 1 per page
   const [printMode, setPrintMode] = useState<'4up' | 'full'>('4up');
+  const [isPrinting, setIsPrinting] = useState(false);
+  const [printError, setPrintError] = useState<string | null>(null);
 
-  const handleBulkPrint = () => {
+  const handleBulkPrint = async () => {
     triggerHapticFeedback();
-    printElement('bulk-payslip-print-container');
+    setIsPrinting(true);
+    setPrintError(null);
+    try {
+      const res = await printElement('bulk-payslip-print-container', `Kegama Bulk Payslips - ${payrollRun.periodName}`);
+      if (!res.ok) setPrintError(res.error || 'Print failed. Try again.');
+    } catch (e) {
+      setPrintError(e instanceof Error ? e.message : 'Print failed. Try again.');
+    } finally {
+      setIsPrinting(false);
+    }
   };
 
   // Helper to chunk payslips into groups of 4 for Letter 4-up printing
@@ -97,10 +108,11 @@ export const BulkPayslipPrintView: React.FC<BulkPayslipPrintViewProps> = ({
 
           <button
             onClick={handleBulkPrint}
-            className="flex items-center gap-1.5 px-4 py-1.5 bg-orange-600 hover:bg-orange-500 text-white rounded-lg font-bold text-xs shadow-md shadow-orange-600/20 transition active:scale-95"
+            disabled={isPrinting || payrollRun.payslips.length === 0}
+            className="flex items-center gap-1.5 px-4 py-1.5 bg-orange-600 hover:bg-orange-500 disabled:opacity-50 text-white rounded-lg font-bold text-xs shadow-md shadow-orange-600/20 transition active:scale-95"
           >
             <Printer className="w-4 h-4" />
-            <span>Print All ({totalSheetsNeeded} Sheet{totalSheetsNeeded > 1 ? 's' : ''})</span>
+            <span>{isPrinting ? 'Preparing print…' : `Print All (${totalSheetsNeeded} Sheet${totalSheetsNeeded > 1 ? 's' : ''})`}</span>
           </button>
 
           <button
@@ -112,6 +124,17 @@ export const BulkPayslipPrintView: React.FC<BulkPayslipPrintViewProps> = ({
         </div>
       </div>
 
+      {printError && (
+        <div className="mx-4 mt-2 p-2.5 bg-rose-500/10 border border-rose-500/30 rounded-lg text-[11px] text-rose-200" role="alert">
+          {printError}
+        </div>
+      )}
+      {payrollRun.payslips.length === 0 && (
+        <div className="mx-4 mt-4 p-6 text-center text-slate-400 text-xs border border-dashed border-slate-700 rounded-xl">
+          No payslips in this run yet.
+        </div>
+      )}
+
       {/* Scrollable multi-document view */}
       <div className="flex-1 overflow-y-auto p-4 sm:p-6 bg-slate-950/40 flex justify-center">
         <div id="bulk-payslip-print-container" className="w-full max-w-5xl space-y-8">
@@ -120,7 +143,7 @@ export const BulkPayslipPrintView: React.FC<BulkPayslipPrintViewProps> = ({
             chunkedPayslips.map((chunk, pageIdx) => (
               <div
                 key={`page-${pageIdx}`}
-                className="letter-4up-page bg-white p-3 sm:p-4 rounded-xl border-2 border-orange-400 print:border-none print:shadow-none shadow-xl print:m-0 print:p-0"
+                className="letter-4up-page bg-white p-3 sm:p-4 rounded-xl border border-slate-300 print:border-none print:shadow-none shadow-sm print:m-0 print:p-0"
                 style={{ minHeight: '268mm' }}
               >
                 {chunk.map((payslip) => (

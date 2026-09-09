@@ -11,6 +11,10 @@
   }
 
   body {
+    min-width: 320px;
+    background: #f8fafc;
+    color: #0f172a;
+    font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     -webkit-tap-highlight-color: transparent;
     touch-action: manipulation;
     -webkit-font-smoothing: antialiased;
@@ -22,6 +26,48 @@
   ::selection {
     background-color: #ffedd5;
     color: #9a3412;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+  }
+
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible {
+    outline: 3px solid rgb(249 115 22 / 25%);
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  .page-surface {
+    background:
+      radial-gradient(circle at 100% 0%, rgb(255 237 213 / 42%), transparent 28rem),
+      #f8fafc;
+  }
+
+  .dark .page-surface {
+    background: #020617;
+  }
+
+  .section-kicker {
+    color: #94a3b8;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    line-height: 1.2;
+    text-transform: uppercase;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
   }
 }
 
@@ -54,30 +100,71 @@
 @media print {
   @page {
     size: letter portrait;
-    margin: 5mm;
+    margin: 4mm;
   }
 
   *, *::before, *::after {
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
     color-adjust: exact !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+    filter: none !important;
   }
 
-  body {
+  html,
+  body,
+  #root,
+  #root > div {
     background: #ffffff !important;
+    background-color: #ffffff !important;
     color: #0f172a !important;
     margin: 0 !important;
     padding: 0 !important;
-    -webkit-print-color-adjust: exact !important;
-    print-color-adjust: exact !important;
+    width: 100% !important;
+    min-height: auto !important;
+    overflow: visible !important;
   }
 
+  /* Completely strip dark mode background colors in print */
+  .dark,
+  [class*="dark:bg-"],
+  [class*="bg-slate-950"],
+  [class*="bg-slate-900"] {
+    background-color: #ffffff !important;
+    color: #0f172a !important;
+  }
+
+  /* Neutralize modal overlays, dark backdrops, and blur glass */
+  .fixed.inset-0,
+  [class*="backdrop-blur"],
+  [class*="bg-slate-950/85"],
+  [class*="bg-slate-950/80"],
+  [class*="bg-slate-950/40"] {
+    position: static !important;
+    background: transparent !important;
+    background-color: transparent !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: visible !important;
+    height: auto !important;
+  }
+
+  /* Hide navigation, headers, footers, aside, buttons, toolbars */
   .no-print,
   nav,
   header,
   aside,
   button,
   .print-hide {
+    display: none !important;
+  }
+
+  /* When printing an isolated target element in Android WebView fallback */
+  body.android-printing-active > *:not(.android-print-target):not(:has(.android-print-target)) {
     display: none !important;
   }
 
@@ -89,7 +176,8 @@
     width: 100% !important;
     max-width: 100% !important;
     margin: 0 auto !important;
-    padding: 20px !important;
+    padding: 16px !important;
+    background: #ffffff !important;
     page-break-after: always;
     break-after: page;
   }
@@ -99,13 +187,16 @@
     display: grid !important;
     grid-template-columns: repeat(2, 1fr) !important;
     grid-template-rows: repeat(2, 1fr) !important;
-    gap: 4mm !important;
+    gap: 3mm !important;
     height: 268mm !important;
     max-height: 268mm !important;
     width: 100% !important;
     margin: 0 !important;
     padding: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
     box-sizing: border-box !important;
+    background: #ffffff !important;
     page-break-after: always;
     break-after: page;
   }
@@ -118,6 +209,38 @@
   .payslip-print-sheet:last-child {
     page-break-after: auto;
     break-after: auto;
+  }
+}
+
+/* Loading skeleton shimmer (payslip preview, lists) */
+@keyframes kegama-shimmer {
+  0% { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 37%, #e2e8f0 63%);
+  background-size: 800px 100%;
+  animation: kegama-shimmer 1.4s ease infinite;
+  border-radius: 0.5rem;
+  min-height: 1rem;
+}
+.dark .skeleton {
+  background: linear-gradient(90deg, #1e293b 25%, #334155 37%, #1e293b 63%);
+  background-size: 800px 100%;
+}
+
+@keyframes kegama-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+.animate-fadeIn, .animate-fade-in {
+  animation: kegama-fade-in 0.18s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
   }
 }
 

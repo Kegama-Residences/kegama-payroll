@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
-import { Employee, EmploymentType, AllowanceItem, CustomDeductionItem, CompanyProfile } from '../../types/payroll';
+import { Employee, EmploymentType, AllowanceItem, CustomDeductionItem } from '../../types/payroll';
 import { triggerHapticFeedback } from '../../utils/printService';
-import { formatPHP } from '../../utils/currency';
+import { computePagIbig, computePhilHealth, computeSSS, computeWithholdingTax, deriveRates, factorForSchedule, otRateFor } from '../../utils/calculations';
+import { formatPHP, formatLocalDate } from '../../utils/currency';
+import { numOrEmpty, parseNumInput } from '../../utils/numberInput';
 import { X, Plus, Trash2, UserCheck } from 'lucide-react';
 
 interface EmployeeFormModalProps {
   employee?: Employee | null;
-  company: CompanyProfile;
   onClose: () => void;
   onSave: (employee: Employee) => void;
 }
@@ -27,15 +28,37 @@ export const EmployeeFormModal: React.FC<EmployeeFormModalProps> = ({
   );
   const [jobTitle, setJobTitle] = useState(employee?.jobTitle || '');
   const [department, setDepartment] = useState(employee?.department || 'Front Office');
-  const [hireDate, setHireDate] = useState(employee?.hireDate || new Date().toISOString().slice(0, 10));
+  const [hireDate, setHireDate] = useState(employee?.hireDate || formatLocalDate(new Date()));
   const [employmentType, setEmploymentType] = useState<EmploymentType>(
     employee?.employmentType || 'regular'
   );
   
+  // Statutory benefits enrollment — off for workers with no benefits yet
+  const [statutoryExempt, setStatutoryExempt] = useState(employee?.statutoryExempt === true);
+
+  // Weekly work schedule (rest day varies per employee; 7-day = Sundays included, no rest day)
+  const [restDay, setRestDay] = useState(employee?.workSchedule?.restDay ?? 0);
+  const [daysPerWeek, setDaysPerWeek] = useState<5 | 6 | 7>(employee?.workSchedule?.daysPerWeek ?? 6);
+  const [hoursPerDay, setHoursPerDay] = useState<number>(employee?.workSchedule?.hoursPerDay ?? 8);
+  const rateFactor = factorForSchedule({ restDay, daysPerWeek });
+
   // Philippine Compensation
   const [monthlyRate, setMonthlyRate] = useState<number>(employee?.monthlyRate || 50000);
-  const dailyRate = Number((monthlyRate / 261 * 12 / 12).toFixed(2)) || Number((monthlyRate / 21.75).toFixed(2));
-  const hourlyRate = Number((dailyRate / 8).toFixed(2));
+  const { dailyRate, hourlyRate } = deriveRates(monthlyRate, { restDay, daysPerWeek, hoursPerDay });
+  // Fixed OT peso rate actually paid by the company. 0/empty = auto (hourly × 125%).
+  const [otHourlyRate, setOtHourlyRate] = useState<number>(employee?.otHourlyRate ?? 0);
+  const effectiveOtRate = otHourlyRate > 0 ? otHourlyRate : otRateFor({ hourlyRate });
+
+  // Live preview of auto-computed statutory deductions (monthly, updates with salary)
+  const salaryForPreview = Number.isFinite(monthlyRate) && monthlyRate > 0 ? monthlyRate : 0;
+  const previewSSS = statutoryExempt ? { ee: 0, er: 0 } : computeSSS(salaryForPreview, 'monthly');
+  const previewPhilHealth = statutoryExempt ? { ee: 0, er: 0 } : computePhilHealth(salaryForPreview, 'monthly');
+  const previewPagIbig = statutoryExempt ? { ee: 0, er: 0 } : computePagIbig(salaryForPreview, 'monthly');
+  const previewEETotal = previewSSS.ee + previewPhilHealth.ee + previewPagIbig.ee;
+  const previewBirEstimate = computeWithholdingTax(
+    Math.max(0, salaryForPreview - previewEETotal),
+    'monthly'
+  );
 
   // Philippine Government IDs
   const [tin, setTin] = useState(employee?.governmentIds?.tin || '');
@@ -47,11 +70,10 @@ export const EmployeeFormModal: React.FC<EmployeeFormModalProps> = ({
   const [bankName, setBankName] = useState(employee?.bankDetails?.bankName || 'BDO Unibank, Inc.');
   const [accountNumber, setAccountNumber] = useState(employee?.bankDetails?.accountNumber || '');
 
-  // Allowances (De Minimis & Taxable)
+  // Allowances (De Minimis & Taxable) — start empty so employees
+  // without benefits don't get phantom rows on their payslip.
   const [allowances, setAllowances] = useState<AllowanceItem[]>(
-    employee?.allowances || [
-      { id: 'al-rice', name: 'Rice Subsidy (Non-Taxable De Minimis)', amount: 2000, isTaxable: false },
-    ]
+    employee?.allowances || []
   );
 
   // Custom Deductions (e.g. SSS Loan)
@@ -60,6 +82,7 @@ export const EmployeeFormModal: React.FC<EmployeeFormModalProps> = ({
   );
 
   const [activeTab, setActiveTab] = useState<'profile' | 'salary' | 'gov_bank'>('profile');
+  const [formError, setFormError] = useState<string | null>(null);
 
   const addAllowance = () => {
     setAllowances([
@@ -85,10 +108,23 @@ export const EmployeeFormModal: React.FC<EmployeeFormModalProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!firstName || !lastName || !monthlyRate) {
-      alert('Please fill in employee name and monthly salary rate.');
+    setFormError(null);
+    if (!firstName.trim() || !lastName.trim() || !monthlyRate) {
+      setFormError('Please fill in employee first name, last name, and monthly salary rate.');
       return;
     }
+    // Validate email regardless of which tab is currently active (#19).
+    if (!email.trim()) {
+      setFormError('Please fill in a company email address (required for payslip records).');
+      return;
+    }
+    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailPattern.test(email.trim())) {
+      setFormError('The email address format is invalid. Please check the Profile & Role tab.');
+      return;
+    }
+    const safeHours = Number.isFinite(hoursPerDay) ? Math.min(24, Math.max(1, Math.round(hoursPerDay * 2) / 2)) : 8;
+    setHoursPerDay(safeHours);
 
     triggerHapticFeedback();
 
@@ -106,6 +142,7 @@ export const EmployeeFormModal: React.FC<EmployeeFormModalProps> = ({
       monthlyRate: Number(monthlyRate),
       dailyRate,
       hourlyRate,
+      ...(otHourlyRate > 0 ? { otHourlyRate: Number(otHourlyRate) } : {}),
       governmentIds: {
         tin,
         sss,
@@ -120,6 +157,8 @@ export const EmployeeFormModal: React.FC<EmployeeFormModalProps> = ({
       allowances,
       customDeductions,
       status: employee?.status || 'active',
+      statutoryExempt: statutoryExempt ? true : undefined,
+      workSchedule: { restDay, daysPerWeek, hoursPerDay: safeHours },
     };
 
     onSave(updatedEmployee);
@@ -150,11 +189,11 @@ export const EmployeeFormModal: React.FC<EmployeeFormModalProps> = ({
         </div>
 
         {/* Tabs */}
-        <div className="flex border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/60 px-4 text-xs font-semibold">
+        <div className="no-scrollbar flex overflow-x-auto border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/60 px-4 text-xs font-semibold">
           <button
             type="button"
             onClick={() => setActiveTab('profile')}
-            className={`py-2.5 px-4 border-b-2 transition ${
+              className={`shrink-0 whitespace-nowrap py-2.5 px-4 border-b-2 transition ${
               activeTab === 'profile'
                 ? 'border-orange-600 text-orange-600 dark:text-orange-400 font-bold'
                 : 'border-transparent text-slate-500 hover:text-slate-800'
@@ -165,7 +204,7 @@ export const EmployeeFormModal: React.FC<EmployeeFormModalProps> = ({
           <button
             type="button"
             onClick={() => setActiveTab('salary')}
-            className={`py-2.5 px-4 border-b-2 transition ${
+              className={`shrink-0 whitespace-nowrap py-2.5 px-4 border-b-2 transition ${
               activeTab === 'salary'
                 ? 'border-orange-600 text-orange-600 dark:text-orange-400 font-bold'
                 : 'border-transparent text-slate-500 hover:text-slate-800'
@@ -176,7 +215,7 @@ export const EmployeeFormModal: React.FC<EmployeeFormModalProps> = ({
           <button
             type="button"
             onClick={() => setActiveTab('gov_bank')}
-            className={`py-2.5 px-4 border-b-2 transition ${
+              className={`shrink-0 whitespace-nowrap py-2.5 px-4 border-b-2 transition ${
               activeTab === 'gov_bank'
                 ? 'border-orange-600 text-orange-600 dark:text-orange-400 font-bold'
                 : 'border-transparent text-slate-500 hover:text-slate-800'
@@ -188,6 +227,11 @@ export const EmployeeFormModal: React.FC<EmployeeFormModalProps> = ({
 
         {/* Form Body */}
         <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-4 text-xs">
+          {formError && (
+            <div className="p-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 rounded-xl text-xs text-rose-700 dark:text-rose-300" role="alert">
+              {formError}
+            </div>
+          )}
           {activeTab === 'profile' && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
@@ -328,17 +372,18 @@ export const EmployeeFormModal: React.FC<EmployeeFormModalProps> = ({
                   <input
                     type="number"
                     required
-                    min="10000"
-                    step="500"
-                    value={monthlyRate}
-                    onChange={(e) => setMonthlyRate(parseFloat(e.target.value) || 0)}
+                    min="0"
+                    step="100"
+                    value={numOrEmpty(monthlyRate)}
+                    placeholder="0"
+                    onChange={(e) => setMonthlyRate(parseNumInput(e.target.value))}
                     className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-lg font-mono text-sm text-slate-900"
                   />
                 </div>
 
                 <div>
                   <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Daily Rate (261 factor)
+                    Daily Rate ({rateFactor} factor)
                   </label>
                   <div className="p-2.5 bg-slate-100 border border-slate-300 rounded-lg font-mono text-sm text-slate-800">
                     {formatPHP(dailyRate)}
@@ -353,6 +398,153 @@ export const EmployeeFormModal: React.FC<EmployeeFormModalProps> = ({
                     {formatPHP(hourlyRate)}/hr
                   </div>
                 </div>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  OT Pay per Hour (₱) — what the company really pays
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={numOrEmpty(otHourlyRate)}
+                  placeholder={`Auto ${formatPHP(effectiveOtRate)}/hr (125%)`}
+                  onChange={(e) => setOtHourlyRate(parseNumInput(e.target.value))}
+                  className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-lg font-mono text-sm text-slate-900"
+                />
+                <p className="mt-1 text-[11px] text-slate-500">
+                  {otHourlyRate > 0
+                    ? `Fixed ${formatPHP(otHourlyRate)}/hr will be used for every OT hour.`
+                    : `Empty/0 = auto ${formatPHP(effectiveOtRate)}/hr (hourly × 125%). Set the actual peso rate if different.`}
+                </p>
+              </div>
+
+              {/* Weekly work schedule */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div>
+                  <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Work Days per Week
+                  </label>
+                  <select
+                    value={daysPerWeek}
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      setDaysPerWeek(v === 5 ? 5 : v === 7 ? 7 : 6);
+                    }}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-lg text-slate-900"
+                  >
+                    <option value={6}>6 days (313 factor)</option>
+                    <option value={5}>5 days (261 factor)</option>
+                    <option value={7}>7 days, Sundays included (393 factor)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Hours per Day
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="24"
+                    step="0.5"
+                    value={numOrEmpty(hoursPerDay)}
+                    placeholder="8"
+                    onChange={(e) => setHoursPerDay(parseNumInput(e.target.value))}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-lg font-mono text-slate-900"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Weekly Rest Day {daysPerWeek === 7 && <span className="font-normal">(none — 7-day)</span>}
+                  </label>
+                  <select
+                    value={restDay}
+                    onChange={(e) => setRestDay(Number(e.target.value))}
+                    disabled={daysPerWeek === 7}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-lg text-slate-900 disabled:opacity-50"
+                  >
+                    <option value={0}>Sunday</option>
+                    <option value={1}>Monday</option>
+                    <option value={2}>Tuesday</option>
+                    <option value={3}>Wednesday</option>
+                    <option value={4}>Thursday</option>
+                    <option value={5}>Friday</option>
+                    <option value={6}>Saturday</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Benefits enrollment toggle */}
+              <label className="flex items-start gap-2.5 p-3 border border-slate-300 rounded-lg bg-slate-50/50 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={!statutoryExempt}
+                  onChange={(e) => setStatutoryExempt(!e.target.checked)}
+                  className="mt-0.5 rounded text-orange-600 focus:ring-orange-500"
+                />
+                <span>
+                  <span className="font-bold text-slate-900 block">
+                    Enrolled in statutory benefits (SSS / PhilHealth / Pag-IBIG)
+                  </span>
+                  <span className="text-[11px] text-slate-500">
+                    Uncheck for time-based or casual workers with no benefits yet — no minimum
+                    contributions will be charged. Income tax still applies.
+                  </span>
+                </span>
+              </label>
+
+              {/* Auto-computed mandatory deductions — live preview */}
+              <div className="border border-slate-300 rounded-lg p-3 space-y-2 bg-slate-50/50">
+                <div className="flex justify-between items-center">
+                  <span className="font-bold text-slate-900">
+                    Mandatory Deductions{' '}
+                    <span className="font-normal text-slate-500">(auto from salary)</span>
+                  </span>
+                  <span className="text-[10px] font-mono text-slate-500">MONTHLY EST.</span>
+                </div>
+
+                <div className="divide-y divide-slate-200">
+                  <div className="flex justify-between items-center py-1.5">
+                    <span className="text-slate-700">SSS — EE 5% of salary credit (MSC ₱5k–₱35k)</span>
+                    <span className="font-mono font-semibold tabular-nums">{formatPHP(previewSSS.ee)}</span>
+                  </div>
+                  <div className="flex justify-between items-center py-1.5">
+                    <span className="text-slate-700">PhilHealth — EE 2.5% (floor ₱10k / ceiling ₱100k)</span>
+                    <span className="font-mono font-semibold tabular-nums">{formatPHP(previewPhilHealth.ee)}</span>
+                  </div>
+                  <div className="flex justify-between items-center py-1.5">
+                    <span className="text-slate-700">Pag-IBIG — EE (capped ₱200/mo)</span>
+                    <span className="font-mono font-semibold tabular-nums">{formatPHP(previewPagIbig.ee)}</span>
+                  </div>
+                  <div className="flex justify-between items-center py-1.5">
+                    <span className="text-slate-700">
+                      Est. BIR withholding{' '}
+                      <span className="text-[10px] text-slate-500">(base pay only)</span>
+                    </span>
+                    <span className="font-mono font-semibold tabular-nums">{formatPHP(previewBirEstimate)}</span>
+                  </div>
+                </div>
+
+                <div className="border-t border-slate-300 pt-2 flex justify-between items-center font-bold text-slate-900">
+                  <span>Est. total employee deductions</span>
+                  <span className="font-mono tabular-nums">
+                    {formatPHP(previewEETotal + previewBirEstimate)}
+                  </span>
+                </div>
+
+                {statutoryExempt && (
+                  <p className="text-[11px] font-semibold text-amber-700 leading-relaxed">
+                    Statutory contributions are OFF for this employee — SSS, PhilHealth, and
+                    Pag-IBIG will be ₱0 on every payslip until re-enrolled.
+                  </p>
+                )}
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  Split 50/50 across semi-monthly cut-offs. Final BIR tax is set per pay run —
+                  overtime, allowances, and bonuses change it.
+                </p>
               </div>
 
               {/* Allowances */}
@@ -370,6 +562,12 @@ export const EmployeeFormModal: React.FC<EmployeeFormModalProps> = ({
                   </button>
                 </div>
 
+                {allowances.length === 0 && (
+                  <p className="text-[11px] text-slate-500 py-2 text-center">
+                    No allowances — tap Add only if this employee gets benefits.
+                  </p>
+                )}
+
                 {allowances.map((item, idx) => (
                   <div key={item.id} className="flex items-center gap-2">
                     <input
@@ -385,14 +583,14 @@ export const EmployeeFormModal: React.FC<EmployeeFormModalProps> = ({
                     />
                     <input
                       type="number"
-                      value={item.amount}
+                      value={numOrEmpty(item.amount)}
                       onChange={(e) => {
                         const copy = [...allowances];
-                        copy[idx].amount = parseFloat(e.target.value) || 0;
+                        copy[idx].amount = parseNumInput(e.target.value);
                         setAllowances(copy);
                       }}
                       className="w-24 p-2 bg-slate-50 border border-slate-300 rounded font-mono text-slate-900"
-                      placeholder="PHP"
+                      placeholder="0"
                     />
                     <label className="flex items-center gap-1 text-[11px] text-slate-600 whitespace-nowrap">
                       <input
@@ -432,6 +630,12 @@ export const EmployeeFormModal: React.FC<EmployeeFormModalProps> = ({
                   </button>
                 </div>
 
+                {customDeductions.length === 0 && (
+                  <p className="text-[11px] text-slate-500 py-2 text-center">
+                    No extra deductions — tap Add only for loans or other amortizations.
+                  </p>
+                )}
+
                 {customDeductions.map((item, idx) => (
                   <div key={item.id} className="flex items-center gap-2">
                     <input
@@ -447,14 +651,14 @@ export const EmployeeFormModal: React.FC<EmployeeFormModalProps> = ({
                     />
                     <input
                       type="number"
-                      value={item.amount}
+                      value={numOrEmpty(item.amount)}
                       onChange={(e) => {
                         const copy = [...customDeductions];
-                        copy[idx].amount = parseFloat(e.target.value) || 0;
+                        copy[idx].amount = parseNumInput(e.target.value);
                         setCustomDeductions(copy);
                       }}
                       className="w-28 p-2 bg-slate-50 border border-slate-300 rounded font-mono text-slate-900"
-                      placeholder="PHP"
+                      placeholder="0"
                     />
                     <button
                       type="button"

@@ -3,6 +3,7 @@ import { CompanyProfile, PayslipItem } from '../../types/payroll';
 import { PayslipDocument } from './PayslipDocument';
 import { printElement, triggerHapticFeedback } from '../../utils/printService';
 import { downloadOrSharePDF } from '../../utils/pdfGenerator';
+import { formatPHP } from '../../utils/currency';
 import {
   Printer,
   Download,
@@ -48,7 +49,7 @@ export const PayslipPreviewModal: React.FC<PayslipPreviewModalProps> = ({
   const handlePrint = async () => {
     triggerHapticFeedback();
     const docId = `modal-payslip-doc-${payslip.id}`;
-    await printElement(docId);
+    await printElement(docId, `Payslip - ${payslip.employeeName} - ${payslip.payslipNumber}`);
   };
 
   const handleDownloadPDF = async () => {
@@ -93,7 +94,7 @@ export const PayslipPreviewModal: React.FC<PayslipPreviewModalProps> = ({
               </span>
             </div>
             <p className="text-[11px] text-slate-400 font-mono">
-              Ref: {payslip.payslipNumber} • Net: {payslip.employeeNumber}
+              Ref: {payslip.payslipNumber} • Net: {formatPHP(payslip.netPay)}
             </p>
           </div>
         </div>

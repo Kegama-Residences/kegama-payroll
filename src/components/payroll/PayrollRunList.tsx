@@ -1,5 +1,5 @@
 import React from 'react';
-import { PayrollRun, CompanyProfile } from '../../types/payroll';
+import { PayrollRun } from '../../types/payroll';
 import { formatPHP, formatDate } from '../../utils/currency';
 import { triggerHapticFeedback } from '../../utils/printService';
 import {
@@ -10,12 +10,14 @@ import {
   ChevronRight,
   Users,
   Plus,
-  Trash2
+  Trash2,
+  WalletCards,
+  ArrowUpRight,
+  FileCheck2
 } from 'lucide-react';
 
 interface PayrollRunListProps {
   runs: PayrollRun[];
-  company: CompanyProfile;
   onSelectRun: (run: PayrollRun) => void;
   onNewRun: () => void;
   onBulkPrintRun: (run: PayrollRun) => void;
@@ -29,37 +31,83 @@ export const PayrollRunList: React.FC<PayrollRunListProps> = ({
   onBulkPrintRun,
   onDeleteRun,
 }) => {
-  return (
-    <div className="p-4 sm:p-6 max-w-7xl mx-auto space-y-4">
-      {/* Streamlined Header Bar */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-xl shadow-xs">
-        <div>
-          <h2 className="text-base sm:text-lg font-bold text-slate-950 dark:text-white">
-            Payroll Cycles ({runs.length})
-          </h2>
-          <p className="text-xs text-slate-500">
-            Semi-monthly & monthly cut-off disbursals and official payslips
-          </p>
-        </div>
+  const totalNet = runs.reduce((sum, run) => sum + run.totalNetPay, 0);
+  const totalGross = runs.reduce((sum, run) => sum + run.totalGrossPay, 0);
+  const approvedRuns = runs.filter((run) => run.status !== 'draft').length;
 
-        <button
-          onClick={() => {
-            triggerHapticFeedback();
-            onNewRun();
-          }}
-          className="flex items-center gap-1.5 bg-orange-600 hover:bg-orange-500 text-white font-bold px-4 py-2 rounded-lg shadow-sm transition active:scale-95 text-xs flex-shrink-0"
-        >
-          <Plus className="w-4 h-4" />
-          <span>New Cut-Off</span>
-        </button>
+  return (
+    <div className="p-4 sm:p-7 max-w-7xl mx-auto space-y-5">
+      <section className="relative overflow-hidden rounded-2xl bg-slate-950 p-5 sm:p-7 text-white shadow-xl shadow-slate-900/10">
+        <div className="absolute -right-16 -top-24 h-64 w-64 rounded-full bg-orange-500/20 blur-3xl" />
+        <div className="relative flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <p className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-orange-300">Payroll control center</p>
+            <h2 className="mt-2 text-2xl font-extrabold tracking-tight sm:text-3xl">Keep every pay run moving.</h2>
+            <p className="mt-2 max-w-xl text-xs leading-5 text-slate-400 sm:text-sm">
+              Create compliant cut-offs, review take-home pay, and keep your team ready for payday.
+            </p>
+          </div>
+          <button
+            onClick={() => {
+              triggerHapticFeedback();
+              onNewRun();
+            }}
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-orange-500 px-4 py-3 text-xs font-extrabold text-white shadow-lg shadow-orange-950/40 transition hover:bg-orange-400 active:scale-95"
+          >
+            <Plus className="h-4 w-4" />
+            <span>Start new cut-off</span>
+          </button>
+        </div>
+        <div className="relative mt-6 grid grid-cols-2 gap-3 border-t border-white/10 pt-4 sm:grid-cols-3">
+          <div>
+            <span className="section-kicker text-slate-500">Total payroll runs</span>
+            <p className="mt-1 text-xl font-bold">{runs.length}</p>
+          </div>
+          <div>
+            <span className="section-kicker text-slate-500">Net payroll tracked</span>
+            <p className="mt-1 text-lg font-bold font-mono tabular-nums">{formatPHP(totalNet)}</p>
+          </div>
+          <div className="hidden sm:block">
+            <span className="section-kicker text-slate-500">Reviewed / approved</span>
+            <p className="mt-1 text-xl font-bold">{approvedRuns}<span className="text-sm text-slate-500"> / {runs.length}</span></p>
+          </div>
+        </div>
+      </section>
+
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <WalletCards className="h-4 w-4 text-orange-500" />
+          <p className="mt-3 text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Gross compensation</p>
+          <p className="mt-1 font-mono text-sm font-bold tabular-nums text-slate-900 dark:text-white">{formatPHP(totalGross)}</p>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <ArrowUpRight className="h-4 w-4 text-emerald-500" />
+          <p className="mt-3 text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Latest take-home</p>
+          <p className="mt-1 font-mono text-sm font-bold tabular-nums text-slate-900 dark:text-white">{formatPHP(runs[0]?.totalNetPay || 0)}</p>
+        </div>
+        <div className="col-span-2 rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:col-span-1">
+          <FileCheck2 className="h-4 w-4 text-sky-500" />
+          <p className="mt-3 text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Latest status</p>
+          <p className="mt-1 text-sm font-bold capitalize text-slate-900 dark:text-white">{runs[0]?.status || 'No runs yet'}</p>
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="section-kicker">Your payroll history</p>
+          <h3 className="mt-1 text-lg font-extrabold tracking-tight text-slate-900 dark:text-white">Recent cut-offs</h3>
+        </div>
+        <span className="hidden text-xs font-medium text-slate-400 sm:block">{runs.length} recorded {runs.length === 1 ? 'run' : 'runs'}</span>
       </div>
 
       {/* Runs List */}
       <div className="space-y-3">
 
         {runs.length === 0 ? (
-          <div className="bg-white dark:bg-slate-900 rounded-xl p-10 text-center border border-dashed border-orange-300 dark:border-slate-800">
-            <Calendar className="w-10 h-10 text-orange-400 mx-auto mb-2" />
+          <div className="bg-white dark:bg-slate-900 rounded-2xl p-10 text-center border border-dashed border-orange-300 dark:border-slate-800 shadow-sm">
+            <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-orange-50 text-orange-600 dark:bg-orange-950/40">
+              <Calendar className="h-7 w-7" />
+            </div>
             <h4 className="text-sm font-bold text-slate-800 dark:text-slate-200">
               No Payroll Runs Recorded
             </h4>
@@ -82,7 +130,7 @@ export const PayrollRunList: React.FC<PayrollRunListProps> = ({
               return (
                 <div
                   key={run.id}
-                  className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-4 sm:p-5 shadow-sm hover:border-orange-300 dark:hover:border-orange-900 transition flex flex-col md:flex-row justify-between items-start md:items-center gap-4"
+                  className="group bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-4 sm:p-5 shadow-sm hover:-translate-y-0.5 hover:border-orange-300 hover:shadow-md dark:hover:border-orange-900 transition flex flex-col md:flex-row justify-between items-start md:items-center gap-4"
                 >
                   {/* Left: Period & Status */}
                   <div
@@ -93,7 +141,7 @@ export const PayrollRunList: React.FC<PayrollRunListProps> = ({
                     }}
                   >
                     <div className="flex items-center gap-2.5 flex-wrap">
-                      <h4 className="text-sm sm:text-base font-bold text-slate-950 dark:text-white">
+                       <h4 className="text-sm sm:text-base font-extrabold text-slate-950 dark:text-white">
                         {run.periodName}
                       </h4>
                       <span

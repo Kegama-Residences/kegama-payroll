@@ -2,6 +2,9 @@ import React from 'react';
 import { PayrollRun, CompanyProfile, Employee } from '../../types/payroll';
 import { formatPHP } from '../../utils/currency';
 import { triggerHapticFeedback } from '../../utils/printService';
+import { Capacitor } from '@capacitor/core';
+import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
+import { Share } from '@capacitor/share';
 import {
   BarChart3,
   Building,
@@ -42,8 +45,10 @@ export const ReportsAnalytics: React.FC<ReportsAnalyticsProps> = ({
     avgSalary: data.count > 0 ? data.totalSalary / data.count : 0,
   }));
 
-  const exportCSV = () => {
+  const exportCSV = async () => {
     triggerHapticFeedback();
+    const csvCell = (value: string | number) =>
+      `"${String(value).replace(/"/g, '""')}"`;
     const headers = [
       'Cut-Off Period',
       'Payslip Ref',
@@ -70,51 +75,75 @@ export const ReportsAnalytics: React.FC<ReportsAnalyticsProps> = ({
     runs.forEach((run) => {
       run.payslips.forEach((p) => {
         rows.push([
-          `"${run.periodName}"`,
-          `"${p.payslipNumber}"`,
-          `"${p.employeeNumber}"`,
-          `"${p.employeeName}"`,
-          `"${p.governmentIds.tin}"`,
-          `"${p.governmentIds.sss}"`,
-          `"${p.governmentIds.philhealth}"`,
-          `"${p.governmentIds.pagibig}"`,
-          `"${p.department}"`,
-          p.basicPay.toFixed(2),
-          p.grossEarnings.toFixed(2),
-          p.statutory.withholdingTax.toFixed(2),
-          p.statutory.sssEmployee.toFixed(2),
-          p.statutory.philhealthEmployee.toFixed(2),
-          p.statutory.pagibigEmployee.toFixed(2),
-          p.totalDeductions.toFixed(2),
-          p.netPay.toFixed(2),
-          `"${p.bankDetails.bankName}"`,
-          `"${p.bankDetails.accountNumber}"`,
+          csvCell(run.periodName),
+          csvCell(p.payslipNumber),
+          csvCell(p.employeeNumber),
+          csvCell(p.employeeName),
+          csvCell(p.governmentIds.tin),
+          csvCell(p.governmentIds.sss),
+          csvCell(p.governmentIds.philhealth),
+          csvCell(p.governmentIds.pagibig),
+          csvCell(p.department),
+          csvCell(p.basicPay.toFixed(2)),
+          csvCell(p.grossEarnings.toFixed(2)),
+          csvCell(p.statutory.withholdingTax.toFixed(2)),
+          csvCell(p.statutory.sssEmployee.toFixed(2)),
+          csvCell(p.statutory.philhealthEmployee.toFixed(2)),
+          csvCell(p.statutory.pagibigEmployee.toFixed(2)),
+          csvCell(p.totalDeductions.toFixed(2)),
+          csvCell(p.netPay.toFixed(2)),
+          csvCell(p.bankDetails.bankName),
+          csvCell(p.bankDetails.accountNumber),
         ]);
       });
     });
 
-    const csvContent =
-      'data:text/csv;charset=utf-8,' +
-      [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
+    const csvText = [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
+    const today = new Date();
+    const dateStamp = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    const fileName = `Kegama_PH_Payroll_Summary_${dateStamp}.csv`;
 
-    const encodedUri = encodeURI(csvContent);
+    if (Capacitor.isNativePlatform()) {
+      try {
+        const writeResult = await Filesystem.writeFile({
+          path: fileName,
+          data: csvText,
+          directory: Directory.Cache,
+          encoding: Encoding.UTF8,
+        });
+        await Share.share({
+          title: 'Kegama Payroll CSV Export',
+          text: `Kegama PH Payroll Summary (${fileName})`,
+          url: writeResult.uri,
+          dialogTitle: 'Export or Share Payroll CSV',
+        });
+        return;
+      } catch (err) {
+        console.warn('Native CSV export failed, falling back to browser download:', err);
+      }
+    }
+
+    const blob = new Blob([csvText], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute(
-      'download',
-      `Kegama_PH_Payroll_Summary_${new Date().toISOString().slice(0, 10)}.csv`
-    );
+    link.href = url;
+    link.download = fileName;
     document.body.appendChild(link);
-    link.click();
-    link.remove();
+    try {
+      link.click();
+    } finally {
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+    }
   };
 
   return (
-    <div className="p-3 sm:p-6 max-w-7xl mx-auto space-y-4">
+      <div className="p-4 sm:p-7 max-w-7xl mx-auto space-y-5">
       {/* Streamlined Header Bar */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-xl shadow-xs">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 rounded-2xl shadow-sm">
         <div>
-          <h2 className="text-base sm:text-lg font-bold text-slate-950 dark:text-white flex items-center gap-2">
+          <p className="section-kicker">Compliance & reporting</p>
+          <h2 className="mt-1 text-xl sm:text-2xl font-extrabold tracking-tight text-slate-950 dark:text-white flex items-center gap-2">
             <BarChart3 className="w-5 h-5 text-orange-600" />
             Statutory & Tax Remittances
           </h2>
@@ -125,7 +154,7 @@ export const ReportsAnalytics: React.FC<ReportsAnalyticsProps> = ({
 
         <button
           onClick={exportCSV}
-          className="flex items-center gap-2 px-3.5 py-2 bg-emerald-700 hover:bg-emerald-600 text-white rounded-lg text-xs font-bold shadow-sm transition active:scale-95 flex-shrink-0"
+          className="flex items-center gap-2 px-3.5 py-2.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded-xl text-xs font-bold shadow-sm transition active:scale-95 flex-shrink-0"
         >
           <FileSpreadsheet className="w-4 h-4" />
           <span>Export BIR/DOLE CSV</span>
@@ -190,7 +219,7 @@ export const ReportsAnalytics: React.FC<ReportsAnalyticsProps> = ({
       </div>
 
       {/* Department Breakdown */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-sm space-y-3">
+       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-sm space-y-3">
         <h3 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider flex items-center gap-2">
           <Building className="w-4 h-4 text-orange-600" />
           Departmental Monthly Compensation (PHP ₱)

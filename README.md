@@ -16,8 +16,8 @@ Strictly configured for **Philippine Pesos (PHP ₱)** and compliant with standa
 
 ### 2. Mandatory Statutory Computations
 - **Social Security System (SSS)**:
-  - Computed on Monthly Salary Credit (MSC) capped at ₱30,000.
-  - 4.5% Employee share, 9.5% Employer share (split 50/50 across semi-monthly cut-offs).
+  - Computed on Monthly Salary Credit (MSC) capped at ₱35,000 (2025–2026 SSS Circular schedule).
+  - 5.0% Employee share, 10.0% Employer share (split 50/50 across semi-monthly cut-offs).
 - **PhilHealth**:
   - 5% total premium rate shared equally between Employee (2.5%) and Employer (2.5%).
   - Floor: ₱500 total (₱10,000 base). Ceiling: ₱5,000 total (₱100,000 base).
@@ -51,7 +51,7 @@ Strictly configured for **Philippine Pesos (PHP ₱)** and compliant with standa
 - **Direct System Print**:
   - Android native `PrintManager` bridge in `MainActivity.java` triggering Android's Print Spooler.
   - iOS AirPrint integration.
-  - Isolated iframe printing in WebView/Desktop enforcing clean A4 portrait pages with zero browser UI headers/footers.
+  - Isolated iframe printing in WebView/Desktop enforcing clean US Letter (8.5×11") portrait pages with zero browser UI headers/footers.
 - **Batch Print**: 1-click **Print All** button for entire payroll cut-off batches with CSS `page-break-after: always;`.
 - **Vector PDF Generator & Share**: Client-side 2x resolution PDF generation via `jsPDF` & `html2canvas` with native mobile sharing via `@capacitor/filesystem` and `@capacitor/share`.
 
@@ -126,22 +126,19 @@ The repository includes an enterprise-grade GitHub Actions CI/CD workflow that b
 | **Certificate Subject** | `CN=KEGAMA Payroll, OU=Hospitality Systems, O=Kegama Residences Inc, L=Taguig City, ST=Metro Manila, C=PH` |
 | **SHA-256 Fingerprint** | `74:F0:5F:0B:14:B2:A6:D7:61:45:2C:9F:B5:1D:25:74:55:34:2A:FC:29:85:8E:21:55:F9:36:C4:74:0F:CD:65` |
 
-### API Security & Client-Server Secrets
-Mobile and tablet client interfaces communicate with the centralized Express + SQLite backend via encrypted token authentication:
-- **Header**: `X-Kegama-API-Key`
-- **Default Server Secret**: `kgm_sec_d7dc82afb7e66347fa4a5b5fb9e20fe68f2a81ffd65a0131`
-- **Default Client Key**: `kgm_cli_13378cf6c6187338c9d5df4c2ec6d1a95d37756ff3fc72f7`
+### Local Offline-First Architecture & Data Privacy
+All employee records, statutory contributions, work schedules, and payroll runs are persisted locally on the device via Capacitor Preferences and LocalStorage:
+- **No Remote Backend Required**: Zero external server dependencies or API secret exposure.
+- **Data Portability**: Full JSON backup export and import with cryptographic integrity validation.
+- **Native Sharing**: Exported backups and statutory CSV reports leverage native mobile sharing (Files, Drive, Mail).
 
 ### GitHub Repository Secrets Reference
-To customize or override credentials in your GitHub repository, configure these under **Settings > Secrets and variables > Actions**:
+To configure automated Android signing in your GitHub repository, configure these under **Settings > Secrets and variables > Actions**:
 - `ANDROID_KEYSTORE_BASE64`: Base64 string of `kegama-release.keystore` (found in `android/app/kegama-release.keystore.base64`).
 - `ANDROID_KEYSTORE_PASSWORD`: `kegama_payroll_secret_2026`
 - `ANDROID_KEY_ALIAS`: `kegama`
 - `ANDROID_KEY_PASSWORD`: `kegama_payroll_secret_2026`
-- `KEGAMA_API_SECRET`: Custom backend authentication secret.
-- `KEGAMA_API_BASE_URL`: Production backend API host (e.g. `https://payroll-api.kegamaresidences.com`).
 
 ### Helper Utility Scripts
 - `./scripts/generate-keystore.sh`: Regenerates an Android release keystore and outputs its Base64 string.
-- `./scripts/generate-secrets.sh`: Generates random 192-bit cryptographic API tokens.
 - `./scripts/build-mobile.sh`: Prepares web assets and syncs Android/iOS native projects locally.

@@ -7,6 +7,8 @@ import android.print.PrintDocumentAdapter;
 import android.print.PrintManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebView;
+import android.graphics.Color;
+import android.webkit.WebViewClient;
 import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
@@ -23,8 +25,36 @@ public class MainActivity extends BridgeActivity {
                         PrintManager printManager = (PrintManager) getSystemService(Context.PRINT_SERVICE);
                         if (printManager != null) {
                             PrintDocumentAdapter printAdapter = webView.createPrintDocumentAdapter("Kegama_Payslip_Print");
-                            printManager.print("Kegama Payslip", printAdapter, new PrintAttributes.Builder().build());
+                            PrintAttributes.Builder builder = new PrintAttributes.Builder();
+                            builder.setMediaSize(PrintAttributes.MediaSize.NA_LETTER);
+                            builder.setMinMargins(PrintAttributes.Margins.NO_MARGINS);
+                            printManager.print("Kegama Payslip", printAdapter, builder.build());
                         }
+                    });
+                }
+
+                @JavascriptInterface
+                public void printHtml(final String html, final String title) {
+                    runOnUiThread(() -> {
+                        final String jobTitle = (title != null && !title.isEmpty()) ? title : "Kegama Payslip";
+                        final WebView printWebView = new WebView(MainActivity.this);
+                        printWebView.setBackgroundColor(Color.WHITE);
+                        printWebView.getSettings().setJavaScriptEnabled(false);
+                        printWebView.setWebViewClient(new WebViewClient() {
+                            @Override
+                            public void onPageFinished(WebView view, String url) {
+                                PrintManager printManager = (PrintManager) getSystemService(Context.PRINT_SERVICE);
+                                if (printManager != null) {
+                                    PrintDocumentAdapter printAdapter = printWebView.createPrintDocumentAdapter(jobTitle);
+                                    PrintAttributes.Builder builder = new PrintAttributes.Builder();
+                                    builder.setMediaSize(PrintAttributes.MediaSize.NA_LETTER);
+                                    builder.setColorMode(PrintAttributes.COLOR_MODE_COLOR);
+                                    builder.setMinMargins(PrintAttributes.Margins.NO_MARGINS);
+                                    printManager.print(jobTitle, printAdapter, builder.build());
+                                }
+                            }
+                        });
+                        printWebView.loadDataWithBaseURL("file:///android_asset/", html, "text/html", "UTF-8", null);
                     });
                 }
             }, "NativeAndroidPrinter");
