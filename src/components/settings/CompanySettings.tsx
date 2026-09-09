@@ -14,7 +14,16 @@ import {
   AlertCircle,
   HardDrive,
   MapPin,
+  RefreshCw,
+  Sparkles,
+  Loader2,
 } from 'lucide-react';
+import {
+  CURRENT_APP_VERSION,
+  checkForUpdates,
+  applyUpdateSilently,
+  UpdateInfo,
+} from '../../services/updateService';
 import { BrandLogo } from '../common/BrandLogo';
 
 interface CompanySettingsProps {
@@ -61,9 +70,50 @@ export const CompanySettings: React.FC<CompanySettingsProps> = ({
   const [confirmReset, setConfirmReset] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [updateStatusText, setUpdateStatusText] = useState<string | null>(null);
+
   useEffect(() => {
     setForm({ ...company });
   }, [company]);
+
+  const handleManualCheckUpdate = async () => {
+    triggerHapticFeedback();
+    setIsCheckingUpdate(true);
+    setUpdateStatusText(null);
+    try {
+      const info = await checkForUpdates();
+      setUpdateInfo(info);
+      if (!info.available) {
+        setUpdateStatusText(`App is up to date (v${CURRENT_APP_VERSION}).`);
+      }
+    } catch {
+      setUpdateStatusText('Unable to check for updates right now.');
+    } finally {
+      setIsCheckingUpdate(false);
+    }
+  };
+
+  const handleApplyUpdate = async () => {
+    if (!updateInfo?.available) return;
+    triggerHapticFeedback();
+    setIsUpdating(true);
+    setUpdateStatusText('Starting in-app update...');
+    try {
+      const res = await applyUpdateSilently(updateInfo, (pct, msg) => {
+        setUpdateStatusText(`${msg} (${pct}%)`);
+      });
+      if (!res.success) {
+        setUpdateStatusText(res.message);
+      }
+    } catch (err) {
+      setUpdateStatusText(err instanceof Error ? err.message : 'Update failed');
+    } finally {
+      setIsUpdating(false);
+    }
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -586,6 +636,91 @@ export const CompanySettings: React.FC<CompanySettingsProps> = ({
                 aria-hidden
                 tabIndex={-1}
               />
+            </section>
+
+            {/* Section 06 - In-App Updates */}
+            <section id="updates" aria-labelledby="sec-updates" className={cardCls}>
+              <div className="mb-3">
+                <div className="flex items-center gap-1.5">
+                  <RefreshCw className="w-3.5 h-3.5 text-orange-600 dark:text-orange-400" aria-hidden />
+                  <p className="section-kicker">Section 06 · Updates</p>
+                </div>
+                <h3 id="sec-updates" className="mt-1 text-sm font-extrabold tracking-tight text-slate-900 dark:text-white">
+                  In-App Updates &amp; Releases
+                </h3>
+                <p className="mt-0.5 text-[11px] text-slate-600 dark:text-slate-400">
+                  Kegama Payroll checks GitHub Releases directly for silent updates without redirecting to a web browser.
+                </p>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 space-y-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <span className="text-slate-600 dark:text-slate-400 font-medium">Installed Version</span>
+                  <span className="font-mono font-bold text-slate-900 dark:text-white px-2 py-0.5 rounded-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700">
+                    v{CURRENT_APP_VERSION}
+                  </span>
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <span className="text-slate-600 dark:text-slate-400 font-medium">Update Channel</span>
+                  <span className="text-slate-700 dark:text-slate-300 font-semibold text-[11px]">
+                    GitHub Releases (Official)
+                  </span>
+                </div>
+                {updateInfo?.available && (
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs pt-1 border-t border-slate-200 dark:border-slate-700">
+                    <span className="text-orange-600 dark:text-orange-400 font-bold flex items-center gap-1">
+                      <Sparkles className="w-3.5 h-3.5" />
+                      New Version Available
+                    </span>
+                    <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400 px-2 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800">
+                      v{updateInfo.latestVersion}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {updateStatusText && (
+                <div
+                  className="mt-3 p-3 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-2"
+                  role="status"
+                  aria-live="polite"
+                >
+                  {isUpdating ? (
+                    <Loader2 className="w-4 h-4 animate-spin text-orange-500 shrink-0" />
+                  ) : (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                  )}
+                  <span>{updateStatusText}</span>
+                </div>
+              )}
+
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={handleManualCheckUpdate}
+                  disabled={isCheckingUpdate || isUpdating}
+                  className="inline-flex items-center justify-center gap-2 px-4 min-h-[44px] py-2.5 bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-100 rounded-xl font-bold text-xs transition active:scale-95 hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-50 disabled:pointer-events-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500/50"
+                >
+                  <RefreshCw className={`w-4 h-4 ${isCheckingUpdate ? 'animate-spin text-orange-500' : ''}`} aria-hidden />
+                  <span>{isCheckingUpdate ? 'Checking Releases...' : 'Check for Updates'}</span>
+                </button>
+
+                {updateInfo?.available && (
+                  <button
+                    type="button"
+                    onClick={handleApplyUpdate}
+                    disabled={isUpdating}
+                    className="inline-flex items-center justify-center gap-2 px-4 min-h-[44px] py-2.5 bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-500 hover:to-amber-500 text-white rounded-xl font-bold text-xs shadow-sm transition active:scale-95 disabled:opacity-50 disabled:pointer-events-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500/50"
+                  >
+                    {isUpdating ? (
+                      <Loader2 className="w-4 h-4 animate-spin" aria-hidden />
+                    ) : (
+                      <Sparkles className="w-4 h-4" aria-hidden />
+                    )}
+                    <span>{isUpdating ? 'Installing In-App...' : `Update to v${updateInfo.latestVersion}`}</span>
+                  </button>
+                )}
+              </div>
             </section>
           </div>
         </div>

@@ -18,6 +18,7 @@ import { StatusBar, Style } from '@capacitor/status-bar';
 import { Capacitor } from '@capacitor/core';
 import { Loader2 } from 'lucide-react';
 import { summarizePayslips } from './utils/calculations';
+import { checkForUpdates, applyUpdateSilently } from './services/updateService';
 
 export const App: React.FC = () => {
   const [loading, setLoading] = useState(true);
@@ -46,6 +47,22 @@ export const App: React.FC = () => {
       setLoading(false);
     }
     init();
+
+    // Silent background check for updates after initial load (no prompts, zero browser redirect)
+    const updateTimer = setTimeout(() => {
+      void checkForUpdates()
+        .then((update) => {
+          if (update.available) {
+            console.log('[Kegama Updater] New release available:', update.latestVersion);
+            void applyUpdateSilently(update);
+          }
+        })
+        .catch((err) => {
+          console.warn('[Kegama Updater] Background check failed:', err);
+        });
+    }, 4000);
+
+    return () => clearTimeout(updateTimer);
   }, []);
 
   const updateStateAndPersist = (updater: (prev: AppState) => AppState) => {

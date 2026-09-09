@@ -108,6 +108,13 @@ jobs:
           if [ -f "android/app/build/outputs/apk/debug/app-debug.apk" ]; then
             cp android/app/build/outputs/apk/debug/app-debug.apk output-apk/KEGAMA-Payroll-Debug.apk
           fi
+          # Package web bundle and version manifest for in-app silent updates
+          if [ -d "dist" ]; then
+            cd dist && zip -qr ../output-apk/kegama-bundle.zip . && cd ..
+          fi
+          if [ -f "public/version.json" ]; then
+            cp public/version.json output-apk/version.json
+          fi
           ls -lh output-apk/
 
       - name: Upload Android APK Artifacts

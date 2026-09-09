@@ -58,6 +58,42 @@ public class MainActivity extends BridgeActivity {
                     });
                 }
             }, "NativeAndroidPrinter");
+
+            webView.addJavascriptInterface(new Object() {
+                @JavascriptInterface
+                public void installApk(final String fileUriString) {
+                    runOnUiThread(() -> {
+                        try {
+                            android.net.Uri apkUri;
+                            if (fileUriString != null && fileUriString.startsWith("content://")) {
+                                apkUri = android.net.Uri.parse(fileUriString);
+                            } else if (fileUriString != null && fileUriString.startsWith("file://")) {
+                                java.io.File file = new java.io.File(android.net.Uri.parse(fileUriString).getPath());
+                                apkUri = androidx.core.content.FileProvider.getUriForFile(
+                                    MainActivity.this,
+                                    getPackageName() + ".fileprovider",
+                                    file
+                                );
+                            } else {
+                                java.io.File file = new java.io.File(fileUriString != null ? fileUriString : "");
+                                apkUri = androidx.core.content.FileProvider.getUriForFile(
+                                    MainActivity.this,
+                                    getPackageName() + ".fileprovider",
+                                    file
+                                );
+                            }
+
+                            android.content.Intent intent = new android.content.Intent(android.content.Intent.ACTION_VIEW);
+                            intent.setDataAndType(apkUri, "application/vnd.android.package-archive");
+                            intent.addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                            intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+                            startActivity(intent);
+                        } catch (Exception e) {
+                            android.util.Log.e("KegamaUpdater", "Failed to launch in-app installer", e);
+                        }
+                    });
+                }
+            }, "NativeAndroidUpdater");
         }
     }
 }
